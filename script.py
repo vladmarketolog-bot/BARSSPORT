@@ -733,7 +733,7 @@ def main():
         7: "Июль",   8: "Август",  9: "Сентябрь",
         10: "Октябрь", 11: "Ноябрь", 12: "Декабрь",
     }
-    tab_name = f"{MONTH_NAMES_RU[current_tue.month]} {current_tue.year}"
+    tab_name = f"{MONTH_NAMES_RU[current_wed.month]} {current_wed.year}"
     log.info("Целевая вкладка: '%s'", tab_name)
 
     # Получаем или создаём вкладку
