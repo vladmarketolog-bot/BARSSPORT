@@ -976,9 +976,11 @@ def build_update_requests(
     COL_TUE      = 5   # Столбец F — Вторник
     COL_TOTAL    = 6   # Столбец G — "Итого за неделю"
     COL_TARGETED = 7   # Столбец H — "Кол-во целевых"
-    COL_BUDGET   = 8   # Столбец I — "Израсходованный бюджет" (ручной ввод)
-    COL_AVG_LEAD = 9   # Столбец J — "Общая цена лида" (формула)
-    COL_TGT_LEAD = 10  # Столбец K — "Цена целевого лида" (формула)
+    COL_CR       = 8   # Столбец I — "Конверсия в целевой, %"
+    COL_BUDGET   = 9   # Столбец J — "Израсходованный бюджет" (ручной ввод)
+    COL_SHARE    = 10  # Столбец K — "Доля бюджета, %"
+    COL_AVG_LEAD = 11  # Столбец L — "Общая цена лида" (формула)
+    COL_TGT_LEAD = 12  # Столбец M — "Цена целевого лида" (формула)
 
     daily = aggregated["daily"]
     targeted = aggregated["targeted"]
@@ -1054,27 +1056,39 @@ def build_update_requests(
         tgt = targeted.get(source_name, 0)
         requests_list.append(cell_update(data_row_0idx, COL_TARGETED, tgt))
 
-        # Формулы цены лида (с разделителем ; для русской локали)
+        # Формулы (с разделителем ; для русской локали)
         r = data_row_0idx + 1
-        budget_cell = f"I{r}"
-        total_cell  = f"G{r}"
-        tgt_cell    = f"H{r}"
+        r_total = (header_row + len(TABLE_ROWS)) + 1
 
+        # Конверсия в целевой, % (Col I)
         requests_list.append(formula_update(
-            data_row_0idx, COL_AVG_LEAD,
-            f"=IF({total_cell}>0; {budget_cell}/{total_cell}; \"\")",
+            data_row_0idx, COL_CR,
+            f'=IF(G{r}>0; H{r}/G{r}; "")'
         ))
 
+        # Доля бюджета, % (Col K)
+        requests_list.append(formula_update(
+            data_row_0idx, COL_SHARE,
+            f'=IF(J{r_total}>0; J{r}/J{r_total}; "")'
+        ))
+
+        # Общая цена лида (Col L)
+        requests_list.append(formula_update(
+            data_row_0idx, COL_AVG_LEAD,
+            f'=IF(G{r}>0; J{r}/G{r}; "")'
+        ))
+
+        # Цена целевого лида (Col M)
         requests_list.append(formula_update(
             data_row_0idx, COL_TGT_LEAD,
-            f"=IF({tgt_cell}>0; {budget_cell}/{tgt_cell}; \"\")",
+            f'=IF(H{r}>0; J{r}/H{r}; "")'
         ))
 
     # Для строки ИТОГО
     itog_row_0idx = header_row + len(TABLE_ROWS)
     requests_list.append(cell_update(itog_row_0idx, COL_SOURCE, "ИТОГО"))
 
-    # ИТОГО считает через формулы SUM, прописанные на шаге создания шаблона,
+    # ИТОГО считает через формулы SUM и IF, прописанные на шаге создания шаблона,
     # поэтому нам не нужно вручную перезаписывать ячейки строки ИТОГО.
 
     log.info("Подготовлено %d requests для Google Sheets", len(requests_list))
