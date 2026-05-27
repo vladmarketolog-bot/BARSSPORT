@@ -970,6 +970,9 @@ def fetch_yandex_direct_cost(
     Если данных нет или произошла ошибка, возвращает None.
     """
     import time
+    token = token.strip()
+    if client_login:
+        client_login = client_login.strip()
     log.info("Запрос расходов Яндекс.Директ с %s по %s...", date_from, date_to)
     
     url = "https://api.direct.yandex.com/v5/reports"

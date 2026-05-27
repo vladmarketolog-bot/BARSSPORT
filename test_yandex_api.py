@@ -4,7 +4,11 @@ from datetime import date
 
 def run_tests():
     token = os.environ.get("YANDEX_DIRECT_TOKEN")
+    if token:
+        token = token.strip()
     client_login = os.environ.get("YANDEX_DIRECT_CLIENT_LOGIN")
+    if client_login:
+        client_login = client_login.strip()
 
     print("=" * 60)
     print("ЗАПУСК ДИАГНОСТИКИ API ЯНДЕКС.ДИРЕКТ")
