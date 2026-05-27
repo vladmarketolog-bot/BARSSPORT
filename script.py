@@ -420,6 +420,8 @@ def get_or_create_sheet_tab(sheets, spreadsheet_id: str, tab_name: str):
     Возвращает sheet_id вкладки.
     """
     meta = sheets.get(spreadsheetId=spreadsheet_id).execute()
+    existing_tabs = [sheet["properties"]["title"] for sheet in meta.get("sheets", [])]
+    log.info("Доступные вкладки в таблице: %s", existing_tabs)
     for sheet in meta.get("sheets", []):
         if sheet["properties"]["title"] == tab_name:
             log.info("Вкладка '%s' найдена.", tab_name)
