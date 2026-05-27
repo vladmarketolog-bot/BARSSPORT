@@ -972,7 +972,7 @@ def fetch_yandex_direct_cost(
     import time
     log.info("Запрос расходов Яндекс.Директ с %s по %s...", date_from, date_to)
     
-    url = "https://api.direct.yandex.com/json/v5/reports"
+    url = "https://api.direct.yandex.com/v5/reports"
     
     # Заголовки авторизации и параметров
     headers = {
