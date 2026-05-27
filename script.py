@@ -399,8 +399,105 @@ def aggregate_leads(windows: dict, all_leads: list[dict], tail_leads: list[dict]
 
 
 # ---------------------------------------------------------------------------
-# Google Sheets: поиск нужного блока и запись данных
-# -----------------------------------------------------------------------def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: int, current_wed: date):
+# Google Sheets: вспомогательные функции, поиск нужного блока и запись данных
+# ---------------------------------------------------------------------------
+
+def get_sheets_service(service_account_json: str):
+    """Создаёт авторизованный клиент Google Sheets API."""
+    creds_dict = json.loads(service_account_json)
+    creds = service_account.Credentials.from_service_account_info(
+        creds_dict,
+        scopes=["https://www.googleapis.com/auth/spreadsheets"],
+    )
+    service = build("sheets", "v4", credentials=creds)
+    return service.spreadsheets()
+
+
+def get_or_create_sheet_tab(sheets, spreadsheet_id: str, tab_name: str):
+    """
+    Проверяет, существует ли вкладка с именем tab_name.
+    Если нет — создаёт её.
+    Возвращает sheet_id вкладки.
+    """
+    meta = sheets.get(spreadsheetId=spreadsheet_id).execute()
+    existing_tabs = [sheet["properties"]["title"] for sheet in meta.get("sheets", [])]
+    log.info("Доступные вкладки в таблице: %s", existing_tabs)
+    for sheet in meta.get("sheets", []):
+        if sheet["properties"]["title"] == tab_name:
+            log.info("Вкладка '%s' найдена.", tab_name)
+            return sheet["properties"]["sheetId"]
+
+    # Вкладка не найдена — создаём
+    log.info("Вкладка '%s' не найдена. Создаём...", tab_name)
+    body = {
+        "requests": [{
+            "addSheet": {
+                "properties": {"title": tab_name}
+            }
+        }]
+    }
+    resp = sheets.batchUpdate(spreadsheetId=spreadsheet_id, body=body).execute()
+    return resp["replies"][0]["addSheet"]["properties"]["sheetId"]
+
+
+def find_week_block_row(sheets, spreadsheet_id: str, tab_name: str, target_wed: date) -> int | None:
+    """
+    Ищет начальную строку блока для текущей недели в таблице Google Sheets.
+    """
+    target_str_short = target_wed.strftime("%d.%m")       # "27.05"
+    target_str_full  = target_wed.strftime("%d.%m.%Y")    # "27.05.2026"
+    target_str_day   = str(target_wed.day)                # "27"
+
+    range_notation = f"'{tab_name}'!A1:M200"
+    try:
+        result = sheets.values().get(
+            spreadsheetId=spreadsheet_id,
+            range=range_notation,
+        ).execute()
+        rows = result.get("values", [])
+        for row_idx, row in enumerate(rows):
+            for cell in row:
+                cell_str = str(cell).strip()
+                if cell_str in (target_str_short, target_str_full, target_str_day):
+                    log.info(
+                        "Дата недели найдена в строке %d (значение: '%s')",
+                        row_idx + 1, cell_str,
+                    )
+                    return row_idx + 1  # 1-indexed
+    except Exception as e:
+        log.warning("Ошибка при чтении листа '%s': %s", tab_name, e)
+
+    log.warning(
+        "Блок для недели %s не найден на листе '%s'. Проверяем все остальные листы...",
+        target_wed, tab_name,
+    )
+
+    try:
+        meta = sheets.get(spreadsheetId=spreadsheet_id).execute()
+        for sheet in meta.get("sheets", []):
+            title = sheet["properties"]["title"]
+            if title == tab_name:
+                continue
+            res = sheets.values().get(
+                spreadsheetId=spreadsheet_id,
+                range=f"'{title}'!A1:M200",
+            ).execute()
+            r_rows = res.get("values", [])
+            for r_idx, r in enumerate(r_rows):
+                for cell in r:
+                    cell_str = str(cell).strip()
+                    if cell_str in (target_str_short, target_str_full, target_str_day):
+                        log.info(
+                            "💡 НАЙДЕНО на листе '%s' в строке %d (значение: '%s')",
+                            title, r_idx + 1, cell_str,
+                        )
+    except Exception as e:
+        log.warning("Не удалось выполнить поиск по всем листам: %s", e)
+
+    return None
+
+
+def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: int, current_wed: date):
     """
     Создаёт шаблон со всеми неделями месяца на указанной вкладке.
     """
