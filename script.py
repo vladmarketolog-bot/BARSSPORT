@@ -400,108 +400,152 @@ def aggregate_leads(windows: dict, all_leads: list[dict], tail_leads: list[dict]
 
 # ---------------------------------------------------------------------------
 # Google Sheets: поиск нужного блока и запись данных
-# ---------------------------------------------------------------------------
-
-def get_sheets_service(service_account_json: str):
-    """Создаёт авторизованный клиент Google Sheets API."""
-    creds_dict = json.loads(service_account_json)
-    creds = service_account.Credentials.from_service_account_info(
-        creds_dict,
-        scopes=["https://www.googleapis.com/auth/spreadsheets"],
-    )
-    service = build("sheets", "v4", credentials=creds)
-    return service.spreadsheets()
-
-
-def get_or_create_sheet_tab(sheets, spreadsheet_id: str, tab_name: str):
+# -----------------------------------------------------------------------def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: int, current_wed: date):
     """
-    Проверяет, существует ли вкладка с именем tab_name.
-    Если нет — создаёт её (опционально).
-    Возвращает sheet_id вкладки.
+    Создаёт шаблон со всеми неделями месяца на указанной вкладке.
     """
-    meta = sheets.get(spreadsheetId=spreadsheet_id).execute()
-    existing_tabs = [sheet["properties"]["title"] for sheet in meta.get("sheets", [])]
-    log.info("Доступные вкладки в таблице: %s", existing_tabs)
-    for sheet in meta.get("sheets", []):
-        if sheet["properties"]["title"] == tab_name:
-            log.info("Вкладка '%s' найдена.", tab_name)
-            return sheet["properties"]["sheetId"]
+    log.info("Шаблон не найден. Создаём структуру недель для листа '%s'...", tab_name)
 
-    # Вкладка не найдена — создаём
-    log.info("Вкладка '%s' не найдена. Создаём...", tab_name)
-    body = {
-        "requests": [{
-            "addSheet": {
-                "properties": {"title": tab_name}
-            }
-        }]
-    }
-    resp = sheets.batchUpdate(spreadsheetId=spreadsheet_id, body=body).execute()
-    return resp["replies"][0]["addSheet"]["properties"]["sheetId"]
+    # 1. Находим все Среды в текущем месяце
+    year = current_wed.year
+    month = current_wed.month
 
+    wednesdays = []
+    d = date(year, month, 1)
+    while d.month == month:
+        if d.weekday() == 2:  # Wednesday
+            wednesdays.append(d)
+        d += timedelta(days=1)
 
-def find_week_block_row(sheets, spreadsheet_id: str, tab_name: str, target_wed: date) -> int | None:
-    """
-    Ищет начальную строку блока для текущей недели в таблице Google Sheets.
+    log.info("Найдено %d недель в месяце: %s", len(wednesdays), [w.strftime("%d.%m") for w in wednesdays])
 
-    Логика: сканирует столбец "Период" (обычно столбец B или C) в поисках
-    даты, совпадающей с current_wed (форматы "27.05", "27.05.2026" и т.д.).
+    # Каждая неделя занимает ровно 19 строк (с отступами)
+    num_rows = len(wednesdays) * 19
+    values = [["" for _ in range(14)] for _ in range(num_rows)]
+    merge_requests = []
 
-    Возвращает номер строки (1-indexed) заголовка блока или None.
-    """
-    target_str_short = target_wed.strftime("%d.%m")       # "27.05"
-    target_str_full  = target_wed.strftime("%d.%m.%Y")    # "27.05.2026"
-    target_str_day   = str(target_wed.day)                # "27"
+    for idx, wed in enumerate(wednesdays):
+        start_row = idx * 19
 
-    # Читаем целевой лист
-    range_notation = f"'{tab_name}'!A1:M200"
-    try:
-        result = sheets.values().get(
+        # Вычисляем даты
+        thu = wed + timedelta(days=1)
+        fri = wed + timedelta(days=2)
+        mon = wed + timedelta(days=5)
+        tue = wed + timedelta(days=6)
+
+        d_wed = wed.strftime("%d.%m")
+        d_thu = thu.strftime("%d.%m")
+        d_fri = fri.strftime("%d.%m")
+        d_mon = mon.strftime("%d.%m")
+        d_tue = tue.strftime("%d.%m")
+
+        # ── Первая таблица: Данные по лидам ─────────────────────────────────
+        # Заголовки (строка start_row)
+        values[start_row][0] = "Источник"
+        values[start_row][1] = "Период"
+        values[start_row][6] = "Итого за неделю"
+        values[start_row][7] = "Кол-во целевых"
+        values[start_row][8] = "Израсходованный бюджет"
+        values[start_row][9] = "Общая цена лида"
+        values[start_row][10] = "Цена целевого лида"
+        values[start_row][11] = "Динамика количества целевого лида относительной прошлой недели, %"
+        values[start_row][12] = "Динамика стоимости целевого лида относительной прошлой недели, %"
+
+        # Подзаголовки дат (строка start_row + 1)
+        values[start_row+1][1] = d_wed
+        values[start_row+1][2] = d_thu
+        values[start_row+1][3] = d_fri
+        values[start_row+1][4] = d_mon
+        values[start_row+1][5] = d_tue
+
+        # Источники (строки start_row + 2..5)
+        sources = ["Я.Директ", "SEO", "Вход. звонок", "Авито"]
+        for s_idx, src in enumerate(sources):
+            r_idx = start_row + 2 + s_idx
+            values[r_idx][0] = src
+
+            # Формулы цены лида: Общая = Бюджет/Лиды, Целевая = Бюджет/Целевые
+            r_num = r_idx + 1  # 1-indexed row number in sheet
+            # Col G = total leads (index 6), Col H = target leads (index 7), Col I = budget (index 8)
+            values[r_idx][9] = f'=IF(G{r_num}>0, I{r_num}/G{r_num}, "")'
+            values[r_idx][10] = f'=IF(H{r_num}>0, I{r_num}/H{r_num}, "")'
+
+        # Строка ИТОГО (строка start_row + 7)
+        r_total = start_row + 7 + 1
+        values[start_row+7][0] = "ИТОГО"
+        # Сумма Ср-Вт (B..F, indexes 1..5) + Итого (G, index 6) + Целевые (H, index 7) + Бюджет (I, index 8)
+        for col_idx in range(1, 9):
+            col_letter = chr(65 + col_idx)  # 65 = 'A'
+            start_r = r_total - 5
+            end_r = r_total - 2
+            values[start_row+7][col_idx] = f'=SUM({col_letter}{start_r}:{col_letter}{end_r})'
+
+        # ── Вторая таблица: Комментарии и планы ─────────────────────────────
+        values[start_row+10][0] = "Источник"
+        values[start_row+10][1] = "Комментарий по результату недели"
+        values[start_row+10][2] = "План мероприятий на следующую неделю"
+
+        for s_idx, src in enumerate(sources):
+            values[start_row+11+s_idx][0] = src
+
+        values[start_row+16][0] = "Предложение на тест новой площадки:"
+
+        # ── Слияния (Merges) ────────────────────────────────────────────────
+        def add_merge(s_r, e_r, s_c, e_c):
+            merge_requests.append({
+                "mergeCells": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": s_r,
+                        "endRowIndex": e_r + 1,
+                        "startColumnIndex": s_c,
+                        "endColumnIndex": e_c + 1,
+                    },
+                    "mergeType": "MERGE_ALL",
+                }
+            })
+
+        # Вертикальные слияния заголовков первой таблицы
+        add_merge(start_row, start_row + 1, 0, 0)   # Источник
+        add_merge(start_row, start_row + 1, 6, 6)   # Итого за неделю
+        add_merge(start_row, start_row + 1, 7, 7)   # Кол-во целевых
+        add_merge(start_row, start_row + 1, 8, 8)   # Бюджет
+        add_merge(start_row, start_row + 1, 9, 9)   # Общая цена лида
+        add_merge(start_row, start_row + 1, 10, 10) # Цена целевого лида
+        add_merge(start_row, start_row + 1, 11, 11) # Динамика %
+        add_merge(start_row, start_row + 1, 12, 12) # Динамика %
+
+        # Горизонтальное слияние: Период (Cols B-F, index 1-5)
+        add_merge(start_row, start_row, 1, 5)
+
+        # Слияние подзаголовков комментариев
+        add_merge(start_row + 10, start_row + 10, 1, 6)
+        add_merge(start_row + 10, start_row + 10, 7, 12)
+        for s_idx in range(len(sources)):
+            r_c = start_row + 11 + s_idx
+            add_merge(r_c, r_c, 1, 6)
+            add_merge(r_c, r_c, 7, 12)
+
+        add_merge(start_row + 16, start_row + 16, 0, 12)
+
+    # 2. Записываем значения на лист
+    range_name = f"'{tab_name}'!A1"
+    body = {"values": values}
+    sheets.values().update(
+        spreadsheetId=spreadsheet_id,
+        range=range_name,
+        valueInputOption="USER_ENTERED",
+        body=body,
+    ).execute()
+
+    # 3. Отправляем слияния
+    if merge_requests:
+        sheets.batchUpdate(
             spreadsheetId=spreadsheet_id,
-            range=range_notation,
+            body={"requests": merge_requests},
         ).execute()
-        rows = result.get("values", [])
-        for row_idx, row in enumerate(rows):
-            for cell in row:
-                cell_str = str(cell).strip()
-                if cell_str in (target_str_short, target_str_full, target_str_day):
-                    log.info(
-                        "Дата недели найдена в строке %d (значение: '%s')",
-                        row_idx + 1, cell_str,
-                    )
-                    return row_idx + 1  # 1-indexed
-    except Exception as e:
-        log.warning("Ошибка при чтении листа '%s': %s", tab_name, e)
 
-    log.warning(
-        "Блок для недели %s не найден на листе '%s'. Проверяем все остальные листы...",
-        target_wed, tab_name,
-    )
-
-    # Поиск по остальным листам для отладки
-    try:
-        meta = sheets.get(spreadsheetId=spreadsheet_id).execute()
-        for sheet in meta.get("sheets", []):
-            title = sheet["properties"]["title"]
-            if title == tab_name:
-                continue
-            res = sheets.values().get(
-                spreadsheetId=spreadsheet_id,
-                range=f"'{title}'!A1:M200",
-            ).execute()
-            r_rows = res.get("values", [])
-            for r_idx, r in enumerate(r_rows):
-                for cell in r:
-                    cell_str = str(cell).strip()
-                    if cell_str in (target_str_short, target_str_full, target_str_day):
-                        log.info(
-                            "💡 НАЙДЕНО на листе '%s' в строке %d (значение: '%s')",
-                            title, r_idx + 1, cell_str,
-                        )
-    except Exception as e:
-        log.warning("Не удалось выполнить поиск по всем листам: %s", e)
-
-    return None
+    log.info("Шаблон на лист '%s' успешно записан.", tab_name)
 
 
 def build_update_requests(
@@ -512,45 +556,29 @@ def build_update_requests(
 ) -> list[dict]:
     """
     Формирует список batchUpdate requests для записи данных в Google Sheets.
-
-    Структура шаблона (согласно image_242328.png):
-    Строка header_row   : Заголовки дат (Ср, Чт, Пт, Сб/Вс, Пн, Вт)
-    Строка header_row+1 : Подзаголовки (дд.мм)
-    Строка header_row+2+: Данные по источникам (Я.Директ, SEO, Вход. звонок, Авито)
-    Последняя строка    : ИТОГО
-
-    ВАЖНО: Номера столбцов (0-indexed) — измените, если ваш шаблон отличается!
     """
     # ── Маппинг столбцов (0-indexed) ────────────────────────────────────────
-    # Измените согласно реальной структуре вашей таблицы
     COL_SOURCE   = 0   # Столбец A — "Источник"
     COL_WED      = 1   # Столбец B — Среда
     COL_THU      = 2   # Столбец C — Четверг
     COL_FRI      = 3   # Столбец D — Пятница
-    COL_SAT_SUN  = 4   # Столбец E — Сб+Вс (объединены)
-    COL_MON      = 5   # Столбец F — Понедельник
-    COL_TUE      = 6   # Столбец G — Вторник
-    COL_TOTAL    = 7   # Столбец H — "Итого за неделю"
-    COL_TARGETED = 8   # Столбец I — "Кол-во целевых"
-    COL_BUDGET   = 9   # Столбец J — "Израсходованный бюджет" (ручной ввод)
-    COL_AVG_LEAD = 10  # Столбец K — "Общая цена лида" (формула)
-    COL_TGT_LEAD = 11  # Столбец L — "Цена целевого лида" (формула)
+    COL_MON      = 4   # Столбец E — Понедельник (Сб+Вс+Пн)
+    COL_TUE      = 5   # Столбец F — Вторник
+    COL_TOTAL    = 6   # Столбец G — "Итого за неделю"
+    COL_TARGETED = 7   # Столбец H — "Кол-во целевых"
+    COL_BUDGET   = 8   # Столбец I — "Израсходованный бюджет" (ручной ввод)
+    COL_AVG_LEAD = 9   # Столбец J — "Общая цена лида" (формула)
+    COL_TGT_LEAD = 10  # Столбец K — "Цена целевого лида" (формула)
 
-    # ── Строки данных (источников) ────────────────────────────────────────────
-    # header_row — строка заголовка "Период" (даты)
-    # Данные начинаются со следующей строки (+ смещение подзаголовка "дд.мм")
-    # По умолчанию: заголовок + 1 строка с датами + 4 строки данных + 1 итог
-    DATA_ROW_OFFSET = 2   # Сколько строк после header_row начинаются данные
-    ITOG_ROW_OFFSET = 6   # Строка ИТОГО (относительно header_row)
+    DATA_ROW_OFFSET = 2
+    ITOG_ROW_OFFSET = 7   # В шаблоне ИТОГО идет на 7-й строке после заголовка (Header+7)
 
-    days = windows["days"]  # [(date, label), ...]
     daily = aggregated["daily"]
     targeted = aggregated["targeted"]
 
     requests_list = []
 
     def cell_update(row_0idx: int, col_0idx: int, value) -> dict:
-        """Вспомогательная функция: создаёт request на обновление одной ячейки."""
         return {
             "updateCells": {
                 "rows": [{
@@ -565,14 +593,13 @@ def build_update_requests(
                 "fields": "userEnteredValue",
                 "start": {
                     "sheetId": sheet_id,
-                    "rowIndex": row_0idx,   # 0-indexed!
+                    "rowIndex": row_0idx,
                     "columnIndex": col_0idx,
                 },
             }
         }
 
     def formula_update(row_0idx: int, col_0idx: int, formula: str) -> dict:
-        """Вспомогательная функция: вставляет формулу в ячейку."""
         return {
             "updateCells": {
                 "rows": [{
@@ -589,105 +616,60 @@ def build_update_requests(
             }
         }
 
-    # Маппинг label -> column index
-    label_to_col = {
-        "Ср":  COL_WED,
-        "Чт":  COL_THU,
-        "Пт":  COL_FRI,
-        "Сб":  COL_SAT_SUN,   # Сб и Вс суммируются в одну колонку
-        "Вс":  COL_SAT_SUN,
-        "Пн":  COL_MON,
-        "Вт":  COL_TUE,
-    }
-
-    # Промежуточные суммы по дням для строки ИТОГО
-    day_totals: dict[str, int] = {lbl: 0 for _, lbl in days}
-    total_targeted = 0
-
-    # ── Записываем данные по каждому источнику ───────────────────────────────
+    # Суммируем по каждому источнику
     for row_offset, source_name in enumerate(TABLE_ROWS):
-        data_row_0idx = (header_row - 1) + DATA_ROW_OFFSET + row_offset  # 0-indexed
+        data_row_0idx = (header_row - 1) + DATA_ROW_OFFSET + row_offset
 
-        # Вставляем название источника (на случай, если ячейка пуста)
         requests_list.append(cell_update(data_row_0idx, COL_SOURCE, source_name))
 
         row_data = daily.get(source_name, {})
-        row_total = 0
 
-        # Обработка Сб+Вс вместе (суммируем)
-        sat_sun_val = row_data.get("Сб", 0) + row_data.get("Вс", 0)
+        # Подготовка данных по дням
+        val_wed = row_data.get("Ср", 0)
+        val_thu = row_data.get("Чт", 0)
+        val_fri = row_data.get("Пт", 0)
+        val_mon = row_data.get("Сб", 0) + row_data.get("Вс", 0) + row_data.get("Пн", 0)
+        val_tue = row_data.get("Вт", 0)
 
-        for _, label in days:
-            col = label_to_col.get(label)
-            if col is None:
-                continue
+        requests_list.append(cell_update(data_row_0idx, COL_WED, val_wed))
+        requests_list.append(cell_update(data_row_0idx, COL_THU, val_thu))
+        requests_list.append(cell_update(data_row_0idx, COL_FRI, val_fri))
+        requests_list.append(cell_update(data_row_0idx, COL_MON, val_mon))
+        requests_list.append(cell_update(data_row_0idx, COL_TUE, val_tue))
 
-            if label in ("Сб", "Вс"):
-                value = sat_sun_val
-                # Записываем только один раз (при "Сб")
-                if label == "Вс":
-                    continue
-            else:
-                value = row_data.get(label, 0)
-
-            requests_list.append(cell_update(data_row_0idx, col, value))
-            row_total += value
-            day_totals[label] = day_totals.get(label, 0) + value
-
-        # Суббота+воскресенье для итогов (считаем один раз)
-        day_totals["Сб"] = day_totals.get("Сб", 0) + sat_sun_val
-
-        # Итого за строку
-        requests_list.append(cell_update(data_row_0idx, COL_TOTAL, row_data.get("Итого", 0)))
+        # Итого за неделю по лидам (сумма дней)
+        total_leads = val_wed + val_thu + val_fri + val_mon + val_tue
+        requests_list.append(cell_update(data_row_0idx, COL_TOTAL, total_leads))
 
         # Кол-во целевых
         tgt = targeted.get(source_name, 0)
         requests_list.append(cell_update(data_row_0idx, COL_TARGETED, tgt))
-        total_targeted += tgt
 
-        # Формулы цены лида: =Бюджет/Кол-во (с защитой от деления на 0)
-        # Используем нотацию R1C1 для batchUpdate
-        # Budget_cell = та же строка, столбец J (COL_BUDGET)
-        # В A1-нотации (для формул): Бюджет = столбец J, лиды = столбец H
+        # Формулы цены лида
+        r = data_row_0idx + 1
+        budget_cell = f"I{r}"
+        total_cell  = f"G{r}"
+        tgt_cell    = f"H{r}"
 
-        # Пересчитываем в A1-нотацию (1-indexed, col A=1)
-        r = data_row_0idx + 1   # 1-indexed row
-        budget_cell = f"J{r}"   # Ячейка бюджета
-        total_cell  = f"H{r}"   # Ячейка итого лидов
-        tgt_cell    = f"I{r}"   # Ячейка целевых лидов
-
-        # Формула "Общая цена лида" = Бюджет / Итого
         requests_list.append(formula_update(
             data_row_0idx, COL_AVG_LEAD,
             f"=IF({total_cell}>0,{budget_cell}/{total_cell},\"\")",
         ))
 
-        # Формула "Цена целевого лида" = Бюджет / Целевые
         requests_list.append(formula_update(
             data_row_0idx, COL_TGT_LEAD,
             f"=IF({tgt_cell}>0,{budget_cell}/{tgt_cell},\"\")",
         ))
 
-    # ── Строка ИТОГО ─────────────────────────────────────────────────────────
+    # Для строки ИТОГО
     itog_row_0idx = (header_row - 1) + ITOG_ROW_OFFSET
-
     requests_list.append(cell_update(itog_row_0idx, COL_SOURCE, "ИТОГО"))
 
-    for _, label in days:
-        col = label_to_col.get(label)
-        if col is None or label == "Вс":
-            continue
-        requests_list.append(cell_update(itog_row_0idx, col, day_totals.get(label, 0)))
-
-    # Итого лидов
-    grand_total = sum(daily.get(src, {}).get("Итого", 0) for src in TABLE_ROWS)
-    requests_list.append(cell_update(itog_row_0idx, COL_TOTAL, grand_total))
-
-    # Итого целевых
-    requests_list.append(cell_update(itog_row_0idx, COL_TARGETED, total_targeted))
+    # ИТОГО считает через формулы SUM, прописанные на шаге создания шаблона,
+    # поэтому нам не нужно вручную перезаписывать ячейки строки ИТОГО.
 
     log.info("Подготовлено %d requests для Google Sheets", len(requests_list))
-    return requests_list
+        return requests_list
 
 
 def write_to_google_sheets(
@@ -770,11 +752,14 @@ def main():
     header_row = find_week_block_row(sheets, spreadsheet_id, tab_name, current_wed)
 
     if header_row is None:
+        create_month_template(sheets, spreadsheet_id, tab_name, sheet_id, current_wed)
+        header_row = find_week_block_row(sheets, spreadsheet_id, tab_name, current_wed)
+
+    if header_row is None:
         log.error(
-            "❌ Не удалось найти блок недели для даты %s на листе '%s'.\n"
-            "   Убедитесь, что в шаблоне Google Sheets есть строка с датой '%s'.\n"
+            "❌ Не удалось найти или создать блок недели для даты %s на листе '%s'.\n"
             "   Скрипт завершает работу без записи данных.",
-            current_wed, tab_name, current_wed.strftime("%d.%m"),
+            current_wed, tab_name
         )
         return
 
