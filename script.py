@@ -71,7 +71,6 @@ SOURCE_MAP: dict[str, str] = {
 
 # Строки таблицы (фиксированный порядок — как в сквозной аналитике Битрикс24)
 TABLE_ROWS: list[str] = [
-    "Google Ads",
     "ВКонтакте",
     "Я.Директ e-17479930",
     "Прочий трафик",
@@ -291,7 +290,7 @@ def get_source_category(lead: dict) -> str:
         if "seo nat-advance.ru" in tracking_src or "nat-advance.ru" in tracking_src:
             return "SEO nat-advance.ru"
         if "google ads" in tracking_src or "google_ads" in tracking_src:
-            return "Google Ads"
+            return "Прочий трафик"  # Google Ads удален из таблицы, направляем в Прочий трафик
         if "вконтакте" in tracking_src or "vk" in tracking_src:
             return "ВКонтакте"
         if "звонок" in tracking_src or "call" in tracking_src:
@@ -334,8 +333,6 @@ def get_source_category(lead: dict) -> str:
     if "avito" in utm_lower:
         return "Avito"
     if "seo" in utm_lower or "organic" in utm_lower or "google" in utm_lower:
-        if "ads" in utm_lower or "cpc" in utm_lower:
-            return "Google Ads"
         return "SEO barssport.com"
 
     return "Прочий трафик"
