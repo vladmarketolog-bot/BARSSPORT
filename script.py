@@ -276,7 +276,7 @@ def get_source_category(lead: dict) -> str:
     if tracking_src:
         if "директ" in tracking_src or "direct" in tracking_src or "yandex" in tracking_src:
             return "Я.Директ"
-        if "seo" in tracking_src or "organic" in tracking_src or "search" in tracking_src or "barssport.com" in tracking_src:
+        if "seo" in tracking_src or "organic" in tracking_src or "search" in tracking_src or "barssport.com" in tracking_src or "nat-advance.ru" in tracking_src:
             return "SEO"
         if "звонок" in tracking_src or "call" in tracking_src:
             return "Вход. звонок"
