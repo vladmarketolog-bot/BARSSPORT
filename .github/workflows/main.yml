@@ -43,6 +43,8 @@ jobs:
           BITRIX24_WEBHOOK_URL:       ${{ secrets.BITRIX24_WEBHOOK_URL }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           SPREADSHEET_ID:             ${{ secrets.SPREADSHEET_ID }}
+          YANDEX_DIRECT_TOKEN:        ${{ secrets.YANDEX_DIRECT_TOKEN }}
+          YANDEX_DIRECT_CLIENT_LOGIN: ${{ secrets.YANDEX_DIRECT_CLIENT_LOGIN }}
           # Опциональный флаг отладки (из ручного запуска)
           DEBUG_MODE:                 ${{ github.event.inputs.debug_mode || 'false' }}
         run: python script.py
