@@ -449,33 +449,58 @@ def find_week_block_row(sheets, spreadsheet_id: str, tab_name: str, target_wed: 
 
     Возвращает номер строки (1-indexed) заголовка блока или None.
     """
-    # Читаем весь лист (столбцы A-M, до 200 строк)
-    range_notation = f"'{tab_name}'!A1:M200"
-    result = sheets.values().get(
-        spreadsheetId=spreadsheet_id,
-        range=range_notation,
-    ).execute()
-
-    rows = result.get("values", [])
     target_str_short = target_wed.strftime("%d.%m")       # "27.05"
     target_str_full  = target_wed.strftime("%d.%m.%Y")    # "27.05.2026"
     target_str_day   = str(target_wed.day)                # "27"
 
-    for row_idx, row in enumerate(rows):
-        for cell in row:
-            cell_str = str(cell).strip()
-            if cell_str in (target_str_short, target_str_full, target_str_day):
-                log.info(
-                    "Дата недели найдена в строке %d (значение: '%s')",
-                    row_idx + 1, cell_str,
-                )
-                return row_idx + 1  # 1-indexed
+    # Читаем целевой лист
+    range_notation = f"'{tab_name}'!A1:M200"
+    try:
+        result = sheets.values().get(
+            spreadsheetId=spreadsheet_id,
+            range=range_notation,
+        ).execute()
+        rows = result.get("values", [])
+        for row_idx, row in enumerate(rows):
+            for cell in row:
+                cell_str = str(cell).strip()
+                if cell_str in (target_str_short, target_str_full, target_str_day):
+                    log.info(
+                        "Дата недели найдена в строке %d (значение: '%s')",
+                        row_idx + 1, cell_str,
+                    )
+                    return row_idx + 1  # 1-indexed
+    except Exception as e:
+        log.warning("Ошибка при чтении листа '%s': %s", tab_name, e)
 
     log.warning(
-        "Блок для недели %s не найден на листе '%s'. "
-        "Возможно, нужно добавить даты в шаблон вручную.",
+        "Блок для недели %s не найден на листе '%s'. Проверяем все остальные листы...",
         target_wed, tab_name,
     )
+
+    # Поиск по остальным листам для отладки
+    try:
+        meta = sheets.get(spreadsheetId=spreadsheet_id).execute()
+        for sheet in meta.get("sheets", []):
+            title = sheet["properties"]["title"]
+            if title == tab_name:
+                continue
+            res = sheets.values().get(
+                spreadsheetId=spreadsheet_id,
+                range=f"'{title}'!A1:M200",
+            ).execute()
+            r_rows = res.get("values", [])
+            for r_idx, r in enumerate(r_rows):
+                for cell in r:
+                    cell_str = str(cell).strip()
+                    if cell_str in (target_str_short, target_str_full, target_str_day):
+                        log.info(
+                            "💡 НАЙДЕНО на листе '%s' в строке %d (значение: '%s')",
+                            title, r_idx + 1, cell_str,
+                        )
+    except Exception as e:
+        log.warning("Не удалось выполнить поиск по всем листам: %s", e)
+
     return None
 
 
