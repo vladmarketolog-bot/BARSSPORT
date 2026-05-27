@@ -568,13 +568,17 @@ def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: 
 
     log.info("Найдено %d недель в месяце: %s", len(wednesdays), [w.strftime("%d.%m") for w in wednesdays])
 
-    # Каждая неделя занимает ровно 19 строк (с отступами)
-    num_rows = len(wednesdays) * 19
+    # Каждая неделя занимает:
+    # 2 (заголовки) + len(TABLE_ROWS) (данные) + 1 (ИТОГО) + 1 (отступ)
+    # + 1 (заголовок коммент) + len(TABLE_ROWS) (комментарии) + 1 (отступ)
+    # + 1 (предложение) + 1 (отступ в конце)
+    week_height = 2 + len(TABLE_ROWS) + 1 + 1 + 1 + len(TABLE_ROWS) + 1 + 1 + 1
+    num_rows = len(wednesdays) * week_height
     values = [["" for _ in range(14)] for _ in range(num_rows)]
     merge_requests = []
 
     for idx, wed in enumerate(wednesdays):
-        start_row = idx * 19
+        start_row = idx * week_height
 
         # Вычисляем даты
         thu = wed + timedelta(days=1)
@@ -607,9 +611,8 @@ def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: 
         values[start_row+1][4] = d_mon
         values[start_row+1][5] = d_tue
 
-        # Источники (строки start_row + 2..5)
-        sources = ["Я.Директ", "SEO", "Вход. звонок", "Авито"]
-        for s_idx, src in enumerate(sources):
+        # Источники
+        for s_idx, src in enumerate(TABLE_ROWS):
             r_idx = start_row + 2 + s_idx
             values[r_idx][0] = src
 
@@ -619,25 +622,29 @@ def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: 
             values[r_idx][9] = f'=IF(G{r_num}>0; I{r_num}/G{r_num}; "")'
             values[r_idx][10] = f'=IF(H{r_num}>0; I{r_num}/H{r_num}; "")'
 
-        # Строка ИТОГО (строка start_row + 7)
-        r_total = start_row + 7 + 1
-        values[start_row+7][0] = "ИТОГО"
+        # Строка ИТОГО
+        itog_idx = start_row + 2 + len(TABLE_ROWS)
+        r_total = itog_idx + 1
+        values[itog_idx][0] = "ИТОГО"
         # Сумма Ср-Вт (B..F, indexes 1..5) + Итого (G, index 6) + Целевые (H, index 7) + Бюджет (I, index 8)
         for col_idx in range(1, 9):
             col_letter = chr(65 + col_idx)  # 65 = 'A'
-            start_r = r_total - 5
-            end_r = r_total - 2
-            values[start_row+7][col_idx] = f'=SUM({col_letter}{start_r}:{col_letter}{end_r})'
+            start_r = r_total - len(TABLE_ROWS)
+            end_r = r_total - 1
+            values[itog_idx][col_idx] = f'=SUM({col_letter}{start_r}:{col_letter}{end_r})'
 
         # ── Вторая таблица: Комментарии и планы ─────────────────────────────
-        values[start_row+10][0] = "Источник"
-        values[start_row+10][1] = "Комментарий по результату недели"
-        values[start_row+10][2] = "План мероприятий на следующую неделю"
+        comments_header_idx = itog_idx + 2
+        values[comments_header_idx][0] = "Источник"
+        values[comments_header_idx][1] = "Комментарий по результату недели"
+        values[comments_header_idx][2] = "План мероприятий на следующую неделю"
 
-        for s_idx, src in enumerate(sources):
-            values[start_row+11+s_idx][0] = src
+        for s_idx, src in enumerate(TABLE_ROWS):
+            r_c = comments_header_idx + 1 + s_idx
+            values[r_c][0] = src
 
-        values[start_row+16][0] = "Предложение на тест новой площадки:"
+        proposal_idx = comments_header_idx + 1 + len(TABLE_ROWS) + 1
+        values[proposal_idx][0] = "Предложение на тест новой площадки:"
 
         # ── Слияния (Merges) ────────────────────────────────────────────────
         def add_merge(s_r, e_r, s_c, e_c):
@@ -668,14 +675,14 @@ def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: 
         add_merge(start_row, start_row, 1, 5)
 
         # Слияние подзаголовков комментариев
-        add_merge(start_row + 10, start_row + 10, 1, 6)
-        add_merge(start_row + 10, start_row + 10, 7, 12)
-        for s_idx in range(len(sources)):
-            r_c = start_row + 11 + s_idx
+        add_merge(comments_header_idx, comments_header_idx, 1, 6)
+        add_merge(comments_header_idx, comments_header_idx, 7, 12)
+        for s_idx in range(len(TABLE_ROWS)):
+            r_c = comments_header_idx + 1 + s_idx
             add_merge(r_c, r_c, 1, 6)
             add_merge(r_c, r_c, 7, 12)
 
-        add_merge(start_row + 16, start_row + 16, 0, 12)
+        add_merge(proposal_idx, proposal_idx, 0, 12)
 
     # 2. Записываем значения на лист
     range_name = f"'{tab_name}'!A1"
@@ -718,9 +725,6 @@ def build_update_requests(
     COL_BUDGET   = 8   # Столбец I — "Израсходованный бюджет" (ручной ввод)
     COL_AVG_LEAD = 9   # Столбец J — "Общая цена лида" (формула)
     COL_TGT_LEAD = 10  # Столбец K — "Цена целевого лида" (формула)
-
-    DATA_ROW_OFFSET = 2
-    ITOG_ROW_OFFSET = 7   # В шаблоне ИТОГО идет на 7-й строке после заголовка (Header+7)
 
     daily = aggregated["daily"]
     targeted = aggregated["targeted"]
@@ -767,7 +771,9 @@ def build_update_requests(
 
     # Суммируем по каждому источнику
     for row_offset, source_name in enumerate(TABLE_ROWS):
-        data_row_0idx = (header_row - 1) + DATA_ROW_OFFSET + row_offset
+        # header_row - это 1-indexed строка подзаголовков (с датами).
+        # Data-строки начинаются сразу под ней (т.е. на индексе header_row в 0-indexed системе).
+        data_row_0idx = header_row + row_offset
 
         requests_list.append(cell_update(data_row_0idx, COL_SOURCE, source_name))
 
@@ -811,7 +817,7 @@ def build_update_requests(
         ))
 
     # Для строки ИТОГО
-    itog_row_0idx = (header_row - 1) + ITOG_ROW_OFFSET
+    itog_row_0idx = header_row + len(TABLE_ROWS)
     requests_list.append(cell_update(itog_row_0idx, COL_SOURCE, "ИТОГО"))
 
     # ИТОГО считает через формулы SUM, прописанные на шаге создания шаблона,
