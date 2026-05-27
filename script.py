@@ -1563,11 +1563,9 @@ def build_update_requests(
     COL_TUE      = 5   # Столбец F — Вторник
     COL_TOTAL    = 6   # Столбец G — "Итого за неделю"
     COL_TARGETED = 7   # Столбец H — "Кол-во целевых"
-    COL_CR       = 8   # Столбец I — "Конверсия в целевой, %"
-    COL_BUDGET   = 9   # Столбец J — "Израсходованный бюджет" (ручной ввод / авто)
-    COL_SHARE    = 10  # Столбец K — "Доля бюджета, %"
-    COL_AVG_LEAD = 11  # Столбец L — "Общая цена лида" (формула)
-    COL_TGT_LEAD = 12  # Столбец M — "Цена целевого лида" (формула)
+    COL_BUDGET   = 8   # Столбец I — "Израсходованный бюджет" (ручной ввод / авто)
+    COL_AVG_LEAD = 9   # Столбец J — "Общая цена лида" (формула)
+    COL_TGT_LEAD = 10  # Столбец K — "Цена целевого лида" (формула)
 
     daily = aggregated["daily"]
     targeted = aggregated["targeted"]
@@ -1650,30 +1648,17 @@ def build_update_requests(
 
         # Формулы (с разделителем ; для русской локали)
         r = data_row_0idx + 1
-        r_total = (header_row + len(TABLE_ROWS)) + 1
 
-        # Конверсия в целевой, % (Col I)
-        requests_list.append(formula_update(
-            data_row_0idx, COL_CR,
-            f'=IF(G{r}>0; H{r}/G{r}; "")'
-        ))
-
-        # Доля бюджета, % (Col K)
-        requests_list.append(formula_update(
-            data_row_0idx, COL_SHARE,
-            f'=IF(J{r_total}>0; J{r}/J{r_total}; "")'
-        ))
-
-        # Общая цена лида (Col L)
+        # Общая цена лида (Col J)
         requests_list.append(formula_update(
             data_row_0idx, COL_AVG_LEAD,
-            f'=IF(G{r}>0; J{r}/G{r}; "")'
+            f'=IF(G{r}>0; I{r}/G{r}; "")'
         ))
 
-        # Цена целевого лида (Col M)
+        # Цена целевого лида (Col K)
         requests_list.append(formula_update(
             data_row_0idx, COL_TGT_LEAD,
-            f'=IF(H{r}>0; J{r}/H{r}; "")'
+            f'=IF(H{r}>0; I{r}/H{r}; "")'
         ))
 
     # Для строки ИТОГО
@@ -1843,8 +1828,8 @@ def update_dashboard(sheets, spreadsheet_id: str):
         r_num = r + 1
 
         # Формулы для суммирования показателей по всем неделям месяца:
-        # Строка ИТОГО недели в шаблоне: 19 + idx * 28 (бюджет J, всего лидов G, целевых H)
-        budget_cells = [f"'{m_title}'!J{19 + idx * 28}" for idx in range(n_w)]
+        # Строка ИТОГО недели в шаблоне: 19 + idx * 28 (бюджет I, всего лидов G, целевых H)
+        budget_cells = [f"'{m_title}'!I{19 + idx * 28}" for idx in range(n_w)]
         leads_cells = [f"'{m_title}'!G{19 + idx * 28}" for idx in range(n_w)]
         target_cells = [f"'{m_title}'!H{19 + idx * 28}" for idx in range(n_w)]
 
@@ -1907,7 +1892,7 @@ def update_dashboard(sheets, spreadsheet_id: str):
         for m_title, m_yr, m_mn, n_w in months_data:
             for idx in range(n_w):
                 row_in_sheet = 9 + idx * 28 + s_idx
-                budget_cells.append(f"'{m_title}'!J{row_in_sheet}")
+                budget_cells.append(f"'{m_title}'!I{row_in_sheet}")
                 leads_cells.append(f"'{m_title}'!G{row_in_sheet}")
                 target_cells.append(f"'{m_title}'!H{row_in_sheet}")
 
