@@ -69,8 +69,20 @@ SOURCE_MAP: dict[str, str] = {
     "4|AVITO":          "Авито",        # Avito - Avito
 }
 
-# Строки таблицы (фиксированный порядок — как в шаблоне)
-TABLE_ROWS: list[str] = ["Я.Директ", "SEO", "Вход. звонок", "Авито"]
+# Строки таблицы (фиксированный порядок — как в сквозной аналитике Битрикс24)
+TABLE_ROWS: list[str] = [
+    "Google Ads",
+    "ВКонтакте",
+    "Я.Директ e-17479930",
+    "Прочий трафик",
+    "Email Маркетинг",
+    "Карты",
+    "Avito",
+    "SEO barssport.com",
+    "SEO nat-advance.ru",
+    "No Cookie",
+    "Входящий звонок"
+]
 
 # ── Маппинг статусов «целевых» лидов ────────────────────────────────────────
 # Согласно выбору пользователя, целевым считается только статус "Качественный лид" (CONVERTED)
@@ -267,39 +279,66 @@ def fetch_leads(
 
 def get_source_category(lead: dict) -> str:
     """
-    Определяет категорию строки таблицы по полям лида.
-    Приоритет: Источник сквозной аналитики (UF_CRM_TRACKING_SOURCE_TXT).
-    Резерв: SOURCE_ID и UTM_SOURCE.
+    Определяет категорию строки таблицы по Источнику сквозной аналитики (UF_CRM_TRACKING_SOURCE_TXT).
     """
     tracking_src = str(lead.get("UF_CRM_TRACKING_SOURCE_TXT") or "").strip().lower()
 
     if tracking_src:
-        if "директ" in tracking_src or "direct" in tracking_src or "yandex" in tracking_src:
-            return "Я.Директ"
-        if "seo" in tracking_src or "organic" in tracking_src or "search" in tracking_src or "barssport.com" in tracking_src or "nat-advance.ru" in tracking_src:
-            return "SEO"
+        if "я.директ" in tracking_src or "direct" in tracking_src or "yandex" in tracking_src:
+            return "Я.Директ e-17479930"
+        if "seo barssport.com" in tracking_src or "barssport.com" in tracking_src:
+            return "SEO barssport.com"
+        if "seo nat-advance.ru" in tracking_src or "nat-advance.ru" in tracking_src:
+            return "SEO nat-advance.ru"
+        if "google ads" in tracking_src or "google_ads" in tracking_src:
+            return "Google Ads"
+        if "вконтакте" in tracking_src or "vk" in tracking_src:
+            return "ВКонтакте"
         if "звонок" in tracking_src or "call" in tracking_src:
-            return "Вход. звонок"
+            return "Входящий звонок"
         if "avito" in tracking_src or "авито" in tracking_src:
-            return "Авито"
+            return "Avito"
+        if "email" in tracking_src or "рассылка" in tracking_src:
+            return "Email Маркетинг"
+        if "карты" in tracking_src or "maps" in tracking_src:
+            return "Карты"
+        if "no cookie" in tracking_src:
+            return "No Cookie"
+        if "прочий" in tracking_src or "other" in tracking_src:
+            return "Прочий трафик"
 
-    # Резервный вариант по SOURCE_ID
+        # Если не подошло под ключевые слова, но совпадает с одной из строк таблицы
+        for row in TABLE_ROWS:
+            if row.lower() == tracking_src:
+                return row
+
+    # Резервный вариант по SOURCE_ID (для старых или ручных лидов)
     source_id = lead.get("SOURCE_ID", "") or ""
     utm_source = lead.get("UTM_SOURCE", "") or ""
 
     if source_id in SOURCE_MAP:
-        return SOURCE_MAP[source_id]
+        mapped = SOURCE_MAP[source_id]
+        # Сопоставляем старые названия с новыми
+        mapping_old_to_new = {
+            "Я.Директ": "Я.Директ e-17479930",
+            "SEO": "SEO barssport.com",
+            "Вход. звонок": "Входящий звонок",
+            "Авито": "Avito"
+        }
+        return mapping_old_to_new.get(mapped, "Прочий трафик")
 
     # Если SOURCE_ID не в маппинге — проверяем UTM_SOURCE
     utm_lower = utm_source.lower()
     if "yandex" in utm_lower or "direct" in utm_lower or "ya" in utm_lower:
-        return "Я.Директ"
+        return "Я.Директ e-17479930"
     if "avito" in utm_lower:
-        return "Авито"
+        return "Avito"
     if "seo" in utm_lower or "organic" in utm_lower or "google" in utm_lower:
-        return "SEO"
+        if "ads" in utm_lower or "cpc" in utm_lower:
+            return "Google Ads"
+        return "SEO barssport.com"
 
-    return "Прочее"
+    return "Прочий трафик"
 
 
 def aggregate_leads(windows: dict, all_leads: list[dict], tail_leads: list[dict]) -> dict:
