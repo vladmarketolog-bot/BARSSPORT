@@ -83,12 +83,6 @@ TABLE_ROWS: list[str] = [
     "Входящий звонок"
 ]
 
-# ── Маппинг статусов «целевых» лидов ────────────────────────────────────────
-# Согласно выбору пользователя, целевым считается только статус "Качественный лид" (CONVERTED)
-TARGET_STATUSES: set[str] = {
-    "CONVERTED",    # «Качественный лид»
-}
-
 # Статусы мусорных лидов, которые не должны учитываться при подсчете общего количества лидов (Правило А)
 EXCLUDED_STATUSES: set[str] = {
     "3",  # Спам/Рассылка
@@ -96,6 +90,20 @@ EXCLUDED_STATUSES: set[str] = {
     "5",  # Тест
     "6",  # Клиент существует в базе
     "7",  # Неверный номер
+}
+
+# Статусы лидов, которые НЕ считаются целевыми (любые другие статусы считаются целевыми)
+NON_TARGET_STATUSES: set[str] = {
+    "3",     # Спам/Рассылка
+    "4",     # Дубль
+    "5",     # Тест
+    "6",     # Клиент существует в базе
+    "7",     # Неверный номер
+    "8",     # Ребенок
+    "9",     # 1 комплект
+    "17",    # Не берет трубку
+    "18",    # Не наш ассортимент
+    "JUNK",  # Заявку не оставлял
 }
 
 # ── Временная зона ───────────────────────────────────────────────────────────
@@ -422,15 +430,15 @@ def aggregate_leads(windows: dict, all_leads: list[dict], tail_leads: list[dict]
         if created_date == current_tue:
             continue
 
-        # Лид создан в Ср-Пн и является целевым
-        if current_wed <= created_date <= current_mon and status in TARGET_STATUSES:
+        # Лид создан в Ср-Пн и является целевым (все статусы кроме NON_TARGET_STATUSES)
+        if current_wed <= created_date <= current_mon and status not in NON_TARGET_STATUSES:
             category = get_source_category(lead)
             if category in targeted:
                 targeted[category] += 1
 
     # ── Правило Б: «Хвосты» прошлого Вторника ───────────────────────────────
     # tail_leads — лиды, созданные во Вт прошлой недели и уже ставшие целевыми
-    # (API вернул их с фильтром по статусу + дате создания = prev_tue)
+    # (API вернул их без фильтра по статусу, фильтруем в Python по дате изменения и целевому статусу)
     for lead in tail_leads:
         status = lead.get("STATUS_ID", "")
         raw_modify = lead.get("DATE_MODIFY", "")
@@ -442,7 +450,7 @@ def aggregate_leads(windows: dict, all_leads: list[dict], tail_leads: list[dict]
         except (ValueError, TypeError):
             modify_date = None
 
-        if status not in TARGET_STATUSES:
+        if status in NON_TARGET_STATUSES:
             continue
 
         # Если дата изменения не попала в текущий период — пропускаем
@@ -886,17 +894,10 @@ def main():
     # Основной пул: Ср прошлой — Вт текущей
     all_leads = fetch_leads(webhook_url, current_wed, current_tue)
 
-    # «Хвосты» прошлого Вт: лиды, созданные во Вт прошлой недели с целевым статусом
-    # Битрикс24 не позволяет фильтровать по дате изменения статуса напрямую,
-    # поэтому забираем все лиды за прошлый Вт с нужным статусом и
-    # затем фильтруем по DATE_MODIFY в Python (в функции aggregate_leads).
-    tail_filter = {"STATUS_ID": list(TARGET_STATUSES)}
-    # Если TARGET_STATUSES содержит несколько статусов — API принимает список
-    # для оператора IN: {"@STATUS_ID": [...]}
-    # Исправляем фильтр под Битрикс24-синтаксис:
-    tail_filter_bitrix = {"@STATUS_ID": list(TARGET_STATUSES)}
-
-    tail_leads = fetch_leads(webhook_url, prev_tue, prev_tue, extra_filter=tail_filter_bitrix)
+    # «Хвосты» прошлого Вт: лиды, созданные во Вт прошлой недели.
+    # Так как целевые статусы теперь определяются через исключение (все кроме NON_TARGET_STATUSES),
+    # забираем все лиды за прошлый Вт и затем фильтруем по DATE_MODIFY и статусу в Python.
+    tail_leads = fetch_leads(webhook_url, prev_tue, prev_tue)
 
     # 4. Агрегируем данные
     aggregated = aggregate_leads(windows, all_leads, tail_leads)

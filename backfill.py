@@ -16,8 +16,7 @@ from script import (
     find_week_block_row,
     create_month_template,
     build_update_requests,
-    write_to_google_sheets,
-    TARGET_STATUSES
+    write_to_google_sheets
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -38,8 +37,7 @@ def backfill_week(sheets, webhook_url, spreadsheet_id, target_wed: date):
     all_leads = fetch_leads(webhook_url, current_wed, current_tue)
 
     # «Хвосты» прошлой недели
-    tail_filter_bitrix = {"@STATUS_ID": list(TARGET_STATUSES)}
-    tail_leads = fetch_leads(webhook_url, prev_tue, prev_tue, extra_filter=tail_filter_bitrix)
+    tail_leads = fetch_leads(webhook_url, prev_tue, prev_tue)
 
     # 3. Агрегируем данные
     aggregated = aggregate_leads(windows, all_leads, tail_leads)
