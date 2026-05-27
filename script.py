@@ -1570,6 +1570,25 @@ def build_update_requests(
     targeted = aggregated["targeted"]
     budgets = aggregated.get("budgets", {})
 
+    # Автоматический расчет еженедельной доли бюджета на SEO barssport.com (30 000 руб. в месяц)
+    current_wed = windows["current_wed"]
+    m_num = current_wed.month
+    y_num = current_wed.year
+    
+    # Считаем количество сред в этом месяце
+    num_weeks = 0
+    from datetime import date, timedelta
+    d = date(y_num, m_num, 1)
+    while d.month == m_num:
+        if d.weekday() == 2:  # Среда
+            num_weeks += 1
+        d += timedelta(days=1)
+        
+    if num_weeks > 0:
+        seo_weekly = round(30000.0 / num_weeks, 2)
+        if "SEO barssport.com" not in budgets or budgets["SEO barssport.com"] is None:
+            budgets["SEO barssport.com"] = seo_weekly
+
     requests_list = []
 
     def cell_update(row_0idx: int, col_0idx: int, value) -> dict:
