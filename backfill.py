@@ -18,7 +18,9 @@ from script import (
     build_update_requests,
     write_to_google_sheets,
     update_dashboard,
-    fetch_yandex_direct_cost
+    fetch_yandex_direct_cost,
+    parse_direct_csv_files,
+    fetch_yandex_direct_cost_browser
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -45,16 +47,51 @@ def backfill_week(sheets, webhook_url, spreadsheet_id, target_wed: date):
     aggregated = aggregate_leads(windows, all_leads, tail_leads)
 
     # Получаем расходы Яндекс.Директ для этой исторической недели
-    yandex_token = os.environ.get("YANDEX_DIRECT_TOKEN")
-    yandex_login = os.environ.get("YANDEX_DIRECT_CLIENT_LOGIN")
+    # Приоритет 0: CSV-файл в репозитории
+    # Приоритет 1: API Яндекс.Директ
+    # Приоритет 2: браузерная автоматизация
+    yandex_token    = os.environ.get("YANDEX_DIRECT_TOKEN", "").strip()
+    yandex_login    = os.environ.get("YANDEX_DIRECT_CLIENT_LOGIN", "").strip()
+    yandex_browser_login    = os.environ.get("YANDEX_LOGIN", "").strip()
+    yandex_browser_password = os.environ.get("YANDEX_PASSWORD", "").strip()
+    yandex_secret_answer    = os.environ.get("YANDEX_SECRET_ANSWER", "").strip() or None
     aggregated["budgets"] = {}
-    if yandex_token:
+
+    yandex_cost = None
+
+    # Попытка 0: CSV-файл(ы)
+    csv_cost = parse_direct_csv_files(current_wed, current_tue)
+    if csv_cost is not None:
+        yandex_cost = csv_cost
+
+    # Попытка 1: API
+    if yandex_cost is None and yandex_token:
         try:
-            yandex_cost = fetch_yandex_direct_cost(yandex_token, yandex_login, current_wed, current_tue)
-            if yandex_cost is not None:
-                aggregated["budgets"]["Я.Директ e-17479930"] = yandex_cost
+            log.info("Пробуем получить расходы через API для недели %s...", current_wed)
+            yandex_cost = fetch_yandex_direct_cost(yandex_token, yandex_login or None, current_wed, current_tue)
         except Exception as e:
-            log.error("Ошибка при автоимпорте расходов Яндекс.Директ для недели %s: %s", current_wed, e, exc_info=True)
+            log.warning("API Яндекс.Директ недоступен для недели %s: %s.", current_wed, e)
+            yandex_cost = None
+
+    # Попытка 2: Браузер
+    if yandex_cost is None and yandex_browser_login and yandex_browser_password:
+        try:
+            log.info("Получаем расходы через браузер для недели %s...", current_wed)
+            yandex_cost = fetch_yandex_direct_cost_browser(
+                yandex_browser_login,
+                yandex_browser_password,
+                yandex_secret_answer,
+                current_wed,
+                current_tue,
+            )
+        except Exception as e:
+            log.error("Ошибка браузерного импорта для недели %s: %s", current_wed, e)
+
+    if yandex_cost is not None:
+        aggregated["budgets"]["Я.Директ e-17479930"] = yandex_cost
+        log.info("Расходы Яндекс.Директ записаны: %.2f руб.", yandex_cost)
+    else:
+        log.warning("Расходы Яндекс.Директ не получены для недели %s", current_wed)
 
     # 4. Название вкладки (по дате Среды)
     MONTH_NAMES_RU = {
