@@ -92,6 +92,13 @@ def main():
 
     sheets = get_sheets_service(service_account_json)
 
+    # Запуск диагностики Yandex Direct API
+    try:
+        import test_yandex_api
+        test_yandex_api.run_tests()
+    except Exception as e:
+        log.error("Не удалось запустить диагностику Yandex API: %s", e)
+
     # Определяем все среды для Апреля и Мая 2026 года
     backfill_weeks = [
         # --- Апрель 2026 ---
