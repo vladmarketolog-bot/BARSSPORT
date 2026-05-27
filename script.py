@@ -958,6 +958,104 @@ def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: 
     log.info("Шаблон на лист '%s' успешно записан.", tab_name)
 
 
+def fetch_yandex_direct_cost(
+    token: str,
+    client_login: str | None,
+    date_from: date,
+    date_to: date,
+) -> float | None:
+    """
+    Запрашивает фактический расход из API Яндекс.Директа (Reports Service v5)
+    за указанный период и возвращает сумму в рублях (с НДС).
+    Если данных нет или произошла ошибка, возвращает None.
+    """
+    import time
+    log.info("Запрос расходов Яндекс.Директ с %s по %s...", date_from, date_to)
+    
+    url = "https://api.direct.yandex.com/json/v5/reports"
+    
+    # Заголовки авторизации и параметров
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept-Language": "ru",
+        "processingMode": "auto",
+        "returnMoneyInMicros": "false",  # Возвращать в рублях, а не в микрокопейках
+        "skipReportHeader": "true",
+        "skipReportSummary": "true",
+    }
+    if client_login:
+        headers["Client-Login"] = client_login
+
+    # Тело запроса отчета
+    payload = {
+        "params": {
+            "SelectionCriteria": {
+                "DateFrom": date_from.isoformat(),
+                "DateTo": date_to.isoformat()
+            },
+            "FieldNames": ["Cost"],
+            "ReportName": f"Report_{date_from.strftime('%Y%m%d')}_{date_to.strftime('%Y%m%d')}",
+            "ReportType": "ACCOUNT_PERFORMANCE_REPORT",
+            "DateRangeType": "CUSTOM_DATE",
+            "Format": "TSV",
+            "IncludeDiscount": "NO",
+            "IncludeVAT": "YES"
+        }
+    }
+
+    # Отправляем запрос с обработкой ожидания очереди 201/202
+    for attempt in range(5):
+        try:
+            resp = requests.post(url, json=payload, headers=headers, timeout=30)
+            if resp.status_code == 200:
+                break
+            elif resp.status_code in (201, 202):
+                log.info("Отчет Яндекс.Директ ставится в очередь, ожидание (попытка %d/5)...", attempt + 1)
+                time.sleep(5)
+            else:
+                log.error("Ошибка API Яндекс.Директ (Код %d): %s", resp.status_code, resp.text)
+                return None
+        except requests.RequestException as e:
+            log.error("Сетевая ошибка при запросе к API Яндекс.Директ: %s", e)
+            return None
+    else:
+        log.error("Не удалось дождаться отчета Яндекс.Директ.")
+        return None
+
+    # Парсим TSV ответ
+    lines = resp.text.strip().split("\n")
+    if not lines or len(lines) <= 1:
+        log.warning("Отчет Яндекс.Директ не вернул данных о расходах.")
+        return 0.0
+
+    # Находим индекс колонки Cost
+    header = lines[0].split("\t")
+    cost_idx = -1
+    for i, col in enumerate(header):
+        if col.strip() == "Cost":
+            cost_idx = i
+            break
+
+    if cost_idx == -1:
+        log.error("Колонка 'Cost' не найдена в ответе API Яндекс.Директ. Заголовки: %s", header)
+        return None
+
+    # Суммируем расходы
+    total_cost = 0.0
+    for line in lines[1:]:
+        cols = line.split("\t")
+        if len(cols) > cost_idx:
+            val_str = cols[cost_idx].strip()
+            if val_str and val_str != "--":
+                try:
+                    total_cost += float(val_str)
+                except ValueError:
+                    log.warning("Не удалось спарсить значение расхода как число: '%s'", val_str)
+
+    log.info("Успешно получены расходы Яндекс.Директ: %.2f руб. (с НДС)", total_cost)
+    return total_cost
+
+
 def build_update_requests(
     sheet_id: int,
     header_row: int,
@@ -977,13 +1075,14 @@ def build_update_requests(
     COL_TOTAL    = 6   # Столбец G — "Итого за неделю"
     COL_TARGETED = 7   # Столбец H — "Кол-во целевых"
     COL_CR       = 8   # Столбец I — "Конверсия в целевой, %"
-    COL_BUDGET   = 9   # Столбец J — "Израсходованный бюджет" (ручной ввод)
+    COL_BUDGET   = 9   # Столбец J — "Израсходованный бюджет" (ручной ввод / авто)
     COL_SHARE    = 10  # Столбец K — "Доля бюджета, %"
     COL_AVG_LEAD = 11  # Столбец L — "Общая цена лида" (формула)
     COL_TGT_LEAD = 12  # Столбец M — "Цена целевого лида" (формула)
 
     daily = aggregated["daily"]
     targeted = aggregated["targeted"]
+    budgets = aggregated.get("budgets", {})
 
     requests_list = []
 
@@ -1055,6 +1154,10 @@ def build_update_requests(
         # Кол-во целевых
         tgt = targeted.get(source_name, 0)
         requests_list.append(cell_update(data_row_0idx, COL_TARGETED, tgt))
+
+        # Автоматический бюджет (если есть в переданных бюджетах)
+        if source_name in budgets and budgets[source_name] is not None:
+            requests_list.append(cell_update(data_row_0idx, COL_BUDGET, budgets[source_name]))
 
         # Формулы (с разделителем ; для русской локали)
         r = data_row_0idx + 1
@@ -1582,6 +1685,19 @@ def main():
 
     # 4. Агрегируем данные
     aggregated = aggregate_leads(windows, all_leads, tail_leads)
+
+    # 4.1. Получаем расходы Яндекс.Директ (если есть токен в окружении)
+    yandex_token = os.environ.get("YANDEX_DIRECT_TOKEN")
+    yandex_login = os.environ.get("YANDEX_DIRECT_CLIENT_LOGIN")
+    aggregated["budgets"] = {}
+    if yandex_token:
+        try:
+            yandex_cost = fetch_yandex_direct_cost(yandex_token, yandex_login, current_wed, current_tue)
+            if yandex_cost is not None:
+                aggregated["budgets"]["Я.Директ e-17479930"] = yandex_cost
+        except Exception as e:
+            log.error("Ошибка при автоимпорте расходов Яндекс.Директ: %s", e, exc_info=True)
+
 
     # 5. Работаем с Google Sheets
     sheets = get_sheets_service(service_account_json)

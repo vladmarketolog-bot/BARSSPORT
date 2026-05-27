@@ -17,7 +17,8 @@ from script import (
     create_month_template,
     build_update_requests,
     write_to_google_sheets,
-    update_dashboard
+    update_dashboard,
+    fetch_yandex_direct_cost
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -42,6 +43,18 @@ def backfill_week(sheets, webhook_url, spreadsheet_id, target_wed: date):
 
     # 3. Агрегируем данные
     aggregated = aggregate_leads(windows, all_leads, tail_leads)
+
+    # Получаем расходы Яндекс.Директ для этой исторической недели
+    yandex_token = os.environ.get("YANDEX_DIRECT_TOKEN")
+    yandex_login = os.environ.get("YANDEX_DIRECT_CLIENT_LOGIN")
+    aggregated["budgets"] = {}
+    if yandex_token:
+        try:
+            yandex_cost = fetch_yandex_direct_cost(yandex_token, yandex_login, current_wed, current_tue)
+            if yandex_cost is not None:
+                aggregated["budgets"]["Я.Директ e-17479930"] = yandex_cost
+        except Exception as e:
+            log.error("Ошибка при автоимпорте расходов Яндекс.Директ для недели %s: %s", current_wed, e, exc_info=True)
 
     # 4. Название вкладки (по дате Среды)
     MONTH_NAMES_RU = {
