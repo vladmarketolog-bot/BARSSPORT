@@ -571,9 +571,28 @@ def find_week_block_row(sheets, spreadsheet_id: str, tab_name: str, target_wed: 
     return None
 
 
+def hex_to_rgb(hex_str: str) -> dict:
+    """Конвертирует HEX цвет в RGB формат для Google Sheets API (значения от 0.0 до 1.0)."""
+    hex_str = hex_str.lstrip('#')
+    if len(hex_str) == 3:
+        hex_str = ''.join([c*2 for c in hex_str])
+    r = int(hex_str[0:2], 16) / 255.0
+    g = int(hex_str[2:4], 16) / 255.0
+    b = int(hex_str[4:6], 16) / 255.0
+    return {"red": r, "green": g, "blue": b}
+
+
+def make_border(hex_color: str = "#CBD5E1") -> dict:
+    """Создаёт объект границы для Google Sheets API."""
+    return {
+        "style": "SOLID",
+        "color": hex_to_rgb(hex_color)
+    }
+
+
 def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: int, current_wed: date):
     """
-    Создаёт шаблон со всеми неделями месяца на указанной вкладке.
+    Создаёт шаблон со всеми неделями месяца на указанной вкладке с профессиональным дизайном и легендой.
     """
     log.info("Шаблон не найден. Создаём структуру недель для листа '%s'...", tab_name)
 
@@ -590,17 +609,103 @@ def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: 
 
     log.info("Найдено %d недель в месяце: %s", len(wednesdays), [w.strftime("%d.%m") for w in wednesdays])
 
-    # Каждая неделя занимает:
-    # 2 (заголовки) + len(TABLE_ROWS) (данные) + 1 (ИТОГО) + 1 (отступ)
-    # + 1 (заголовок коммент) + len(TABLE_ROWS) (комментарии) + 1 (отступ)
-    # + 1 (предложение) + 1 (отступ в конце)
+    # Справка-легенда занимает первые 5 строк (0..4).
+    # Индекс 5 - пустая строка-разделитель.
+    # Каждая неделя занимает 28 строк (с отступами).
     week_height = 2 + len(TABLE_ROWS) + 1 + 1 + 1 + len(TABLE_ROWS) + 1 + 1 + 1
-    num_rows = len(wednesdays) * week_height
+    num_rows = 6 + len(wednesdays) * week_height
     values = [["" for _ in range(14)] for _ in range(num_rows)]
-    merge_requests = []
+    
+    # Список запросов batchUpdate (для слияний и форматирования)
+    requests_list = []
+
+    # ── Справка по логике отчёта (Легенда) ─────────────────────────────────
+    values[0][0] = "Справка по логике отчёта (Сквозная аналитика)"
+    values[1][0] = "• Период отчёта: Среда (00:00) — Вторник (23:59). Лиды за выходные (Сб и Вс) автоматически суммируются в колонку Понедельника."
+    values[2][0] = "• Исключено из общего количества лидов (Дубли, Спам, Тесты, Неверные номера, Клиент существует в базе)."
+    values[3][0] = "• Исключено из целевых лидов (Все вышеперечисленное + Ребенок, 1 комплект, Не берет трубку, Не наш ассортимент, Заявку не оставлял)."
+    values[4][0] = "• Расчет стоимости лида: Стоимость рассчитывается автоматически по формуле сразу после ручного ввода расходов в колонку 'Израсходованный бюджет'."
+
+    def add_merge(s_r, e_r, s_c, e_c):
+        requests_list.append({
+            "mergeCells": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": s_r,
+                    "endRowIndex": e_r + 1,
+                    "startColumnIndex": s_c,
+                    "endColumnIndex": e_c + 1,
+                },
+                "mergeType": "MERGE_ALL",
+            }
+        })
+
+    def format_range(s_r, e_r, s_c, e_c, bg_hex=None, fg_hex=None, size=9, bold=False, italic=False, align="CENTER", num_pattern=None):
+        cell_format = {}
+        fields = []
+
+        if bg_hex:
+            cell_format["backgroundColor"] = hex_to_rgb(bg_hex)
+            fields.append("backgroundColor")
+
+        text_fmt = {}
+        if fg_hex:
+            text_fmt["foregroundColor"] = hex_to_rgb(fg_hex)
+        text_fmt["fontSize"] = size
+        text_fmt["bold"] = bold
+        text_fmt["italic"] = italic
+        cell_format["textFormat"] = text_fmt
+        fields.append("textFormat")
+
+        cell_format["horizontalAlignment"] = align
+        cell_format["verticalAlignment"] = "MIDDLE"
+        fields.extend(["horizontalAlignment", "verticalAlignment"])
+
+        if num_pattern:
+            cell_format["numberFormat"] = {
+                "type": "CURRENCY" if "₽" in num_pattern else ("PERCENT" if "%" in num_pattern else "NUMBER"),
+                "pattern": num_pattern
+            }
+            fields.append("numberFormat")
+
+        border = make_border("#CBD5E1")
+        cell_format["borders"] = {
+            "top": border,
+            "bottom": border,
+            "left": border,
+            "right": border
+        }
+        fields.append("borders")
+
+        requests_list.append({
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": s_r,
+                    "endRowIndex": e_r + 1,
+                    "startColumnIndex": s_c,
+                    "endColumnIndex": e_c + 1,
+                },
+                "cell": {
+                    "userEnteredFormat": cell_format
+                },
+                "fields": f"userEnteredFormat({','.join(fields)})"
+            }
+        })
+
+    # Слияния и стили для Легенды
+    add_merge(0, 0, 0, 12)
+    add_merge(1, 1, 0, 12)
+    add_merge(2, 2, 0, 12)
+    add_merge(3, 3, 0, 12)
+    add_merge(4, 4, 0, 12)
+    
+    format_range(0, 0, 0, 12, bg_hex="#1E293B", fg_hex="#FFFFFF", size=11, bold=True)
+    format_range(1, 4, 0, 12, bg_hex="#F8FAFC", size=9, align="LEFT")
+    format_range(4, 4, 0, 12, bg_hex="#F8FAFC", size=9, align="LEFT", italic=True)
 
     for idx, wed in enumerate(wednesdays):
-        start_row = idx * week_height
+        start_row = 6 + idx * week_height
 
         # Вычисляем даты
         thu = wed + timedelta(days=1)
@@ -638,9 +743,8 @@ def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: 
             r_idx = start_row + 2 + s_idx
             values[r_idx][0] = src
 
-            # Формулы цены лида: Общая = Бюджет/Лиды, Целевая = Бюджет/Целевые (с разделителем ; для русской локали)
+            # Формулы цены лида: Общая = Бюджет/Лиды, Целевая = Бюджет/Целевые
             r_num = r_idx + 1  # 1-indexed row number in sheet
-            # Col G = total leads (index 6), Col H = target leads (index 7), Col I = budget (index 8)
             values[r_idx][9] = f'=IF(G{r_num}>0; I{r_num}/G{r_num}; "")'
             values[r_idx][10] = f'=IF(H{r_num}>0; I{r_num}/H{r_num}; "")'
 
@@ -648,7 +752,6 @@ def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: 
         itog_idx = start_row + 2 + len(TABLE_ROWS)
         r_total = itog_idx + 1
         values[itog_idx][0] = "ИТОГО"
-        # Сумма Ср-Вт (B..F, indexes 1..5) + Итого (G, index 6) + Целевые (H, index 7) + Бюджет (I, index 8)
         for col_idx in range(1, 9):
             col_letter = chr(65 + col_idx)  # 65 = 'A'
             start_r = r_total - len(TABLE_ROWS)
@@ -668,22 +771,7 @@ def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: 
         proposal_idx = comments_header_idx + 1 + len(TABLE_ROWS) + 1
         values[proposal_idx][0] = "Предложение на тест новой площадки:"
 
-        # ── Слияния (Merges) ────────────────────────────────────────────────
-        def add_merge(s_r, e_r, s_c, e_c):
-            merge_requests.append({
-                "mergeCells": {
-                    "range": {
-                        "sheetId": sheet_id,
-                        "startRowIndex": s_r,
-                        "endRowIndex": e_r + 1,
-                        "startColumnIndex": s_c,
-                        "endColumnIndex": e_c + 1,
-                    },
-                    "mergeType": "MERGE_ALL",
-                }
-            })
-
-        # Вертикальные слияния заголовков первой таблицы
+        # ── Слияния заголовков ──
         add_merge(start_row, start_row + 1, 0, 0)   # Источник
         add_merge(start_row, start_row + 1, 6, 6)   # Итого за неделю
         add_merge(start_row, start_row + 1, 7, 7)   # Кол-во целевых
@@ -692,21 +780,165 @@ def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: 
         add_merge(start_row, start_row + 1, 10, 10) # Цена целевого лида
         add_merge(start_row, start_row + 1, 11, 11) # Динамика %
         add_merge(start_row, start_row + 1, 12, 12) # Динамика %
+        add_merge(start_row, start_row, 1, 5)        # Period
 
-        # Горизонтальное слияние: Период (Cols B-F, index 1-5)
-        add_merge(start_row, start_row, 1, 5)
+        # ── Стили заголовков первой таблицы ──
+        format_range(start_row, start_row, 0, 12, bg_hex="#1E293B", fg_hex="#FFFFFF", size=10, bold=True)
+        format_range(start_row + 1, start_row + 1, 0, 12, bg_hex="#334155", fg_hex="#FFFFFF", size=9, bold=True)
 
-        # Слияние подзаголовков комментариев
+        # ── Стили строк данных ──
+        for s_idx, src in enumerate(TABLE_ROWS):
+            r_idx = start_row + 2 + s_idx
+            bg = "#FFFFFF" if s_idx % 2 == 0 else "#F8FAFC"
+
+            format_range(r_idx, r_idx, 0, 12, bg_hex=bg, size=9)
+            format_range(r_idx, r_idx, 0, 0, bg_hex=bg, size=9, bold=True, align="LEFT")
+            format_range(r_idx, r_idx, 1, 5, bg_hex=bg, size=9, num_pattern="#,##0")
+            format_range(r_idx, r_idx, 6, 6, bg_hex=bg, size=9, bold=True, num_pattern="#,##0")
+            format_range(r_idx, r_idx, 7, 7, bg_hex="#ECFDF5", size=9, bold=True, num_pattern="#,##0")
+            format_range(r_idx, r_idx, 8, 8, bg_hex="#FEF3C7", size=9, align="RIGHT", num_pattern="#,##0\" ₽\"")
+            format_range(r_idx, r_idx, 9, 10, bg_hex=bg, size=9, align="RIGHT", num_pattern="#,##0\" ₽\"")
+            format_range(r_idx, r_idx, 11, 12, bg_hex=bg, size=9, num_pattern="0.0%")
+
+        # ── Стили строки ИТОГО ──
+        format_range(itog_idx, itog_idx, 0, 12, bg_hex="#E2E8F0", size=9, bold=True)
+        format_range(itog_idx, itog_idx, 0, 0, bg_hex="#E2E8F0", size=9, bold=True, align="LEFT")
+        format_range(itog_idx, itog_idx, 1, 7, bg_hex="#E2E8F0", size=9, bold=True, num_pattern="#,##0")
+        format_range(itog_idx, itog_idx, 8, 8, bg_hex="#E2E8F0", size=9, bold=True, align="RIGHT", num_pattern="#,##0\" ₽\"")
+
+        # ── Стили второй таблицы (Комментарии и планы) ──
         add_merge(comments_header_idx, comments_header_idx, 1, 6)
         add_merge(comments_header_idx, comments_header_idx, 7, 12)
         for s_idx in range(len(TABLE_ROWS)):
             r_c = comments_header_idx + 1 + s_idx
             add_merge(r_c, r_c, 1, 6)
             add_merge(r_c, r_c, 7, 12)
-
         add_merge(proposal_idx, proposal_idx, 0, 12)
 
-    # 2. Записываем значения на лист
+        format_range(comments_header_idx, comments_header_idx, 0, 12, bg_hex="#475569", fg_hex="#FFFFFF", size=9, bold=True)
+        format_range(comments_header_idx, comments_header_idx, 0, 0, bg_hex="#475569", fg_hex="#FFFFFF", size=9, bold=True, align="LEFT")
+
+        for s_idx, src in enumerate(TABLE_ROWS):
+            r_c = comments_header_idx + 1 + s_idx
+            bg = "#FFFFFF" if s_idx % 2 == 0 else "#F8FAFC"
+            format_range(r_c, r_c, 0, 12, bg_hex=bg, size=9)
+            format_range(r_c, r_c, 0, 0, bg_hex=bg, size=9, bold=True, align="LEFT")
+
+        format_range(proposal_idx, proposal_idx, 0, 12, bg_hex="#F8FAFC", size=9, align="LEFT", italic=True)
+
+    # ── 3. Установка высоты строк ─────────────────────────────────────────
+    for r in range(6):
+        requests_list.append({
+            "updateDimensionProperties": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "dimension": "ROWS",
+                    "startIndex": r,
+                    "endIndex": r + 1
+                },
+                "properties": {"pixelSize": 24},
+                "fields": "pixelSize"
+            }
+        })
+
+    for idx in range(len(wednesdays)):
+        start_row = 6 + idx * week_height
+        requests_list.append({
+            "updateDimensionProperties": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "dimension": "ROWS",
+                    "startIndex": start_row,
+                    "endIndex": start_row + 1
+                },
+                "properties": {"pixelSize": 35},
+                "fields": "pixelSize"
+            }
+        })
+        requests_list.append({
+            "updateDimensionProperties": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "dimension": "ROWS",
+                    "startIndex": start_row + 1,
+                    "endIndex": start_row + 2
+                },
+                "properties": {"pixelSize": 24},
+                "fields": "pixelSize"
+            }
+        })
+        for r_offset in range(len(TABLE_ROWS) + 1):  # Data + ИТОГО
+            r_idx = start_row + 2 + r_offset
+            requests_list.append({
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": r_idx,
+                        "endIndex": r_idx + 1
+                    },
+                    "properties": {"pixelSize": 24},
+                    "fields": "pixelSize"
+                }
+            })
+        c_header = start_row + 2 + len(TABLE_ROWS) + 2
+        requests_list.append({
+            "updateDimensionProperties": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "dimension": "ROWS",
+                    "startIndex": c_header,
+                    "endIndex": c_header + 1
+                },
+                "properties": {"pixelSize": 28},
+                "fields": "pixelSize"
+            }
+        })
+        for r_offset in range(len(TABLE_ROWS) + 1):  # Comments + Proposal
+            r_idx = c_header + 1 + r_offset
+            requests_list.append({
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": r_idx,
+                        "endIndex": r_idx + 1
+                    },
+                    "properties": {"pixelSize": 24},
+                    "fields": "pixelSize"
+                }
+            })
+
+    # ── 4. Установка ширины столбцов ──────────────────────────────────────
+    col_widths = {
+        0: 180,  # Источник
+        1: 70, 2: 70, 3: 70, 4: 70, 5: 70,  # Ср, Чт, Пт, Пн, Вт
+        6: 120,  # Итого за неделю
+        7: 120,  # Кол-во целевых
+        8: 160,  # Израсходованный бюджет
+        9: 140,  # Общая цена лида
+        10: 140, # Цена целевого лида
+        11: 140, # Динамика целевых %
+        12: 140, # Динамика стоимости %
+    }
+
+    for col_idx, width in col_widths.items():
+        requests_list.append({
+            "updateDimensionProperties": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "dimension": "COLUMNS",
+                    "startIndex": col_idx,
+                    "endIndex": col_idx + 1
+                },
+                "properties": {
+                    "pixelSize": width
+                },
+                "fields": "pixelSize"
+            }
+        })
+
+    # 5. Записываем значения на лист
     range_name = f"'{tab_name}'!A1"
     body = {"values": values}
     sheets.values().update(
@@ -716,11 +948,11 @@ def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: 
         body=body,
     ).execute()
 
-    # 3. Отправляем слияния
-    if merge_requests:
+    # 6. Отправляем слияния и форматирование
+    if requests_list:
         sheets.batchUpdate(
             spreadsheetId=spreadsheet_id,
-            body={"requests": merge_requests},
+            body={"requests": requests_list},
         ).execute()
 
     log.info("Шаблон на лист '%s' успешно записан.", tab_name)
