@@ -234,7 +234,8 @@ def fetch_leads(
     # DATE_CREATE — дата создания
     # DATE_MODIFY — дата последнего изменения (нужна для хитрой логики Вт)
     # UTM_SOURCE — UTM-метка источника (запасной вариант)
-    fields = ["ID", "SOURCE_ID", "STATUS_ID", "DATE_CREATE", "DATE_MODIFY", "UTM_SOURCE"]
+    # UF_CRM_TRACKING_SOURCE_TXT — Источник сквозной аналитики (приоритетный вариант)
+    fields = ["ID", "SOURCE_ID", "STATUS_ID", "DATE_CREATE", "DATE_MODIFY", "UTM_SOURCE", "UF_CRM_TRACKING_SOURCE_TXT"]
 
     filter_params: dict = {
         ">=DATE_CREATE": to_bitrix_dt(date_from),
@@ -266,18 +267,30 @@ def fetch_leads(
 
 def get_source_category(lead: dict) -> str:
     """
-    Определяет категорию строки таблицы по полям SOURCE_ID и UTM_SOURCE лида.
-    Если источник не распознан — возвращает "Прочее" (не записывается в таблицу).
+    Определяет категорию строки таблицы по полям лида.
+    Приоритет: Источник сквозной аналитики (UF_CRM_TRACKING_SOURCE_TXT).
+    Резерв: SOURCE_ID и UTM_SOURCE.
     """
+    tracking_src = str(lead.get("UF_CRM_TRACKING_SOURCE_TXT") or "").strip().lower()
+
+    if tracking_src:
+        if "директ" in tracking_src or "direct" in tracking_src or "yandex" in tracking_src:
+            return "Я.Директ"
+        if "seo" in tracking_src or "organic" in tracking_src or "search" in tracking_src or "barssport.com" in tracking_src:
+            return "SEO"
+        if "звонок" in tracking_src or "call" in tracking_src:
+            return "Вход. звонок"
+        if "avito" in tracking_src or "авито" in tracking_src:
+            return "Авито"
+
+    # Резервный вариант по SOURCE_ID
     source_id = lead.get("SOURCE_ID", "") or ""
     utm_source = lead.get("UTM_SOURCE", "") or ""
 
-    # Сначала проверяем SOURCE_ID (он приоритетнее)
     if source_id in SOURCE_MAP:
         return SOURCE_MAP[source_id]
 
     # Если SOURCE_ID не в маппинге — проверяем UTM_SOURCE
-    # (удобно для Я.Директ, который может передавать utm_source=yandex)
     utm_lower = utm_source.lower()
     if "yandex" in utm_lower or "direct" in utm_lower or "ya" in utm_lower:
         return "Я.Директ"
