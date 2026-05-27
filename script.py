@@ -444,9 +444,12 @@ def find_week_block_row(sheets, spreadsheet_id: str, tab_name: str, target_wed: 
     """
     Ищет начальную строку блока для текущей недели в таблице Google Sheets.
     """
-    target_str_short = target_wed.strftime("%d.%m")       # "27.05"
-    target_str_full  = target_wed.strftime("%d.%m.%Y")    # "27.05.2026"
-    target_str_day   = str(target_wed.day)                # "27"
+    allowed_date_strs = [
+        target_wed.strftime("%d.%m"),                           # "06.05"
+        f"{target_wed.day}.{target_wed.month:02d}",             # "6.05" (без ведущего нуля)
+        target_wed.strftime("%d.%m.%Y"),                        # "06.05.2026"
+        f"{target_wed.day}.{target_wed.month:02d}.{target_wed.year}" # "6.05.2026"
+    ]
 
     range_notation = f"'{tab_name}'!A1:M200"
     try:
@@ -458,7 +461,7 @@ def find_week_block_row(sheets, spreadsheet_id: str, tab_name: str, target_wed: 
         for row_idx, row in enumerate(rows):
             for cell in row:
                 cell_str = str(cell).strip()
-                if cell_str in (target_str_short, target_str_full, target_str_day):
+                if cell_str in allowed_date_strs:
                     log.info(
                         "Дата недели найдена в строке %d (значение: '%s')",
                         row_idx + 1, cell_str,
@@ -486,7 +489,7 @@ def find_week_block_row(sheets, spreadsheet_id: str, tab_name: str, target_wed: 
             for r_idx, r in enumerate(r_rows):
                 for cell in r:
                     cell_str = str(cell).strip()
-                    if cell_str in (target_str_short, target_str_full, target_str_day):
+                    if cell_str in allowed_date_strs:
                         log.info(
                             "💡 НАЙДЕНО на листе '%s' в строке %d (значение: '%s')",
                             title, r_idx + 1, cell_str,
@@ -561,11 +564,11 @@ def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: 
             r_idx = start_row + 2 + s_idx
             values[r_idx][0] = src
 
-            # Формулы цены лида: Общая = Бюджет/Лиды, Целевая = Бюджет/Целевые
+            # Формулы цены лида: Общая = Бюджет/Лиды, Целевая = Бюджет/Целевые (с разделителем ; для русской локали)
             r_num = r_idx + 1  # 1-indexed row number in sheet
             # Col G = total leads (index 6), Col H = target leads (index 7), Col I = budget (index 8)
-            values[r_idx][9] = f'=IF(G{r_num}>0, I{r_num}/G{r_num}, "")'
-            values[r_idx][10] = f'=IF(H{r_num}>0, I{r_num}/H{r_num}, "")'
+            values[r_idx][9] = f'=IF(G{r_num}>0; I{r_num}/G{r_num}; "")'
+            values[r_idx][10] = f'=IF(H{r_num}>0; I{r_num}/H{r_num}; "")'
 
         # Строка ИТОГО (строка start_row + 7)
         r_total = start_row + 7 + 1
@@ -742,7 +745,7 @@ def build_update_requests(
         tgt = targeted.get(source_name, 0)
         requests_list.append(cell_update(data_row_0idx, COL_TARGETED, tgt))
 
-        # Формулы цены лида
+        # Формулы цены лида (с разделителем ; для русской локали)
         r = data_row_0idx + 1
         budget_cell = f"I{r}"
         total_cell  = f"G{r}"
@@ -750,12 +753,12 @@ def build_update_requests(
 
         requests_list.append(formula_update(
             data_row_0idx, COL_AVG_LEAD,
-            f"=IF({total_cell}>0,{budget_cell}/{total_cell},\"\")",
+            f"=IF({total_cell}>0; {budget_cell}/{total_cell}; \"\")",
         ))
 
         requests_list.append(formula_update(
             data_row_0idx, COL_TGT_LEAD,
-            f"=IF({tgt_cell}>0,{budget_cell}/{tgt_cell},\"\")",
+            f"=IF({tgt_cell}>0; {budget_cell}/{tgt_cell}; \"\")",
         ))
 
     # Для строки ИТОГО
