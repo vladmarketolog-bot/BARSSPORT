@@ -1,0 +1,64 @@
+name: Weekly Leads Report (Bitrix24 → Google Sheets)
+
+on:
+  # ── Автоматический запуск каждую Среду в 02:00 UTC (≈ 05:00 МСК) ──────────
+  schedule:
+    - cron: '0 2 * * 3'
+
+  # ── Ручной запуск через кнопку "Run workflow" в GitHub Actions ─────────────
+  workflow_dispatch:
+    inputs:
+      debug_mode:
+        description: 'Включить расширенное логирование (true/false)'
+        required: false
+        default: 'false'
+
+jobs:
+  run-report:
+    name: Generate Weekly Leads Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 15          # Защита от зависания
+
+    steps:
+      # ── 1. Клонируем репозиторий ────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Устанавливаем Python ─────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'           # Кешируем зависимости для ускорения
+
+      # ── 3. Устанавливаем зависимости ───────────────────────────────────────
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # ── 4. Запускаем скрипт ─────────────────────────────────────────────────
+      - name: Run leads report script
+        env:
+          # Все секреты подтягиваются из GitHub Secrets репозитория
+          # Добавьте их: Settings → Secrets and variables → Actions → New repository secret
+          BITRIX24_WEBHOOK_URL:       ${{ secrets.BITRIX24_WEBHOOK_URL }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          SPREADSHEET_ID:             ${{ secrets.SPREADSHEET_ID }}
+          # Опциональный флаг отладки (из ручного запуска)
+          DEBUG_MODE:                 ${{ github.event.inputs.debug_mode || 'false' }}
+        run: python script.py
+
+      # ── 5. Уведомление об ошибке (опционально) ─────────────────────────────
+      # Раскомментируйте блок ниже, если хотите получать уведомления в Telegram
+      # при неуспешном выполнении скрипта.
+      #
+      # - name: Notify on failure
+      #   if: failure()
+      #   uses: appleboy/telegram-action@master
+      #   with:
+      #     to: ${{ secrets.TELEGRAM_CHAT_ID }}
+      #     token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      #     message: |
+      #       ❌ Еженедельный отчёт по лидам УПАЛ!
+      #       Репозиторий: ${{ github.repository }}
+      #       Запуск: ${{ github.run_id }}
+      #       Ссылка: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}

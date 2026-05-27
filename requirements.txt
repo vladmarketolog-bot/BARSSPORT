@@ -1,0 +1,10 @@
+# Зависимости для скрипта еженедельного отчёта по лидам
+# Устанавливаются автоматически в GitHub Actions: pip install -r requirements.txt
+
+# HTTP-запросы к Битрикс24 API
+requests>=2.31.0
+
+# Google Sheets API + авторизация через сервисный аккаунт
+google-api-python-client>=2.108.0
+google-auth>=2.23.0
+google-auth-httplib2>=0.1.1
