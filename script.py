@@ -669,7 +669,7 @@ def build_update_requests(
     # поэтому нам не нужно вручную перезаписывать ячейки строки ИТОГО.
 
     log.info("Подготовлено %d requests для Google Sheets", len(requests_list))
-        return requests_list
+    return requests_list
 
 
 def write_to_google_sheets(
