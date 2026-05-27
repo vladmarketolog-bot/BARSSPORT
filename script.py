@@ -1115,6 +1115,441 @@ def write_to_google_sheets(
     )
 
 
+def update_dashboard(sheets, spreadsheet_id: str):
+    """
+    Создает или обновляет аналитический дашборд руководителя в первой вкладке ('Дашборд').
+    Анализирует все доступные листы месяцев, суммирует данные и строит сводные таблицы
+    с динамическими формулами и профессиональным оформлением.
+    """
+    log.info("Обновление аналитического дашборда...")
+
+    # 1. Получаем список всех листов
+    meta = sheets.get(spreadsheetId=spreadsheet_id).execute()
+    all_sheets = meta.get("sheets", [])
+
+    # 2. Фильтруем и сортируем ежемесячные листы (например, "Май 2026")
+    MONTHS_RU = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
+    MONTH_MAP = {name: idx + 1 for idx, name in enumerate(MONTHS_RU)}
+
+    months_data = []  # Список кортежей: (название_листа, год, номер_месяца, кол_во_недель)
+    for s in all_sheets:
+        title = s["properties"]["title"]
+        parts = title.split()
+        if len(parts) == 2 and parts[0] in MONTH_MAP and parts[1].isdigit():
+            m_name = parts[0]
+            year = int(parts[1])
+            month_num = MONTH_MAP[m_name]
+
+            # Вычисляем количество сред в этом месяце (количество недель в шаблоне)
+            num_weeks = 0
+            d = date(year, month_num, 1)
+            while d.month == month_num:
+                if d.weekday() == 2:  # Среда
+                    num_weeks += 1
+                d += timedelta(days=1)
+
+            months_data.append((title, year, month_num, num_weeks))
+
+    # Сортируем в хронологическом порядке
+    months_data.sort(key=lambda x: (x[1], x[2]))
+
+    if not months_data:
+        log.warning("Не найдено ежемесячных листов для формирования дашборда.")
+        return
+
+    log.info("Найдены ежемесячные листы для дашборда: %s", [m[0] for m in months_data])
+
+    # 3. Создаем или очищаем вкладку "Дашборд"
+    sheet_id = get_or_create_sheet_tab(sheets, spreadsheet_id, "Дашборд")
+    
+    # Очищаем содержимое перед записью
+    sheets.values().clear(spreadsheetId=spreadsheet_id, range="'Дашборд'!A1:Z100").execute()
+
+    num_months = len(months_data)
+    num_channels = len(TABLE_ROWS)
+
+    # Вычисляем общее количество строк на дашборде
+    # 0: Заголовок дашборда
+    # 1: Отступ
+    # 2: Заголовки KPI-карточек
+    # 3: Значения KPI-карточек
+    # 4: Отступ
+    # 5: Заголовок Секции 1 (По месяцам)
+    # 6: Шапка Таблицы 1
+    # 7 .. 7+num_months-1: Данные по месяцам
+    # 7+num_months: ИТОГО по месяцам
+    # 8+num_months .. 9+num_months: Отступы
+    # 10+num_months: Заголовок Секции 2 (По каналам)
+    # 11+num_months: Шапка Таблицы 2
+    # 12+num_months .. 12+num_months+num_channels-1: Данные по каналам
+    # 12+num_months+num_channels: ИТОГО по каналам
+    row_count = 13 + num_months + num_channels
+    values = [["" for _ in range(9)] for _ in range(row_count)]
+    requests_list = []
+
+    # Сброс всех существующих объединений и стилей
+    requests_list.append({
+        "unmergeCells": {
+            "range": {
+                "sheetId": sheet_id
+            }
+        }
+    })
+    requests_list.append({
+        "repeatCell": {
+            "range": {
+                "sheetId": sheet_id
+            },
+            "cell": {
+                "userEnteredFormat": {}
+            },
+            "fields": "userEnteredFormat"
+        }
+    })
+
+    # Перемещаем дашборд на первую вкладку (индекс 0)
+    requests_list.append({
+        "updateSheetProperties": {
+            "properties": {
+                "sheetId": sheet_id,
+                "index": 0
+            },
+            "fields": "index"
+        }
+    })
+
+    # ── 4. Формирование структуры данных ─────────────────────────────────────
+    # Заголовок дашборда (строка 1 / индекс 0)
+    values[0][0] = "АНАЛИТИЧЕСКИЙ ДАШБОРД РУКОВОДИТЕЛЯ"
+
+    # KPI Карточки: Заголовки (строка 3 / индекс 2)
+    values[2][1] = "Инвестировано всего"
+    values[2][2] = "Всего лидов"
+    values[2][3] = "Целевых лидов"
+    values[2][4] = "Конверсия в целевой"
+    values[2][5] = "Цена целевого лида"
+
+    # KPI Карточки: Значения (строка 4 / индекс 3)
+    # Формулы ссылаются на строку ИТОГО первой таблицы (эффективность по месяцам)
+    r_total_m_row = 7 + num_months + 1  # 1-indexed номер строки ИТОГО таблицы месяцев
+    values[3][1] = f"=B{r_total_m_row}"
+    values[3][2] = f"=C{r_total_m_row}"
+    values[3][3] = f"=D{r_total_m_row}"
+    values[3][4] = f'=IF(C4>0; D4/C4; "")'
+    values[3][5] = f'=IF(D4>0; B4/D4; "")'
+
+    # Раздел 1: Эффективность по месяцам
+    values[5][0] = "ЭФФЕКТИВНОСТЬ ПО МЕСЯЦАМ"
+    values[6] = [
+        "Месяц", "Бюджет, ₽", "Всего лидов", "Целевых лидов", 
+        "Конверсия в целевой, %", "Цена лида, ₽", "Цена целевого лида, ₽", 
+        "Динамика целевых, %", "Динамика стоимости, %"
+    ]
+
+    for m_idx, (m_title, m_yr, m_mn, n_w) in enumerate(months_data):
+        r = 7 + m_idx
+        r_num = r + 1
+
+        # Формулы для суммирования показателей по всем неделям месяца:
+        # Строка ИТОГО недели в шаблоне: 19 + idx * 28 (бюджет J, всего лидов G, целевых H)
+        budget_cells = [f"'{m_title}'!J{19 + idx * 28}" for idx in range(n_w)]
+        leads_cells = [f"'{m_title}'!G{19 + idx * 28}" for idx in range(n_w)]
+        target_cells = [f"'{m_title}'!H{19 + idx * 28}" for idx in range(n_w)]
+
+        values[r][0] = m_title
+        values[r][1] = f"=SUM({'; '.join(budget_cells)})"
+        values[r][2] = f"=SUM({'; '.join(leads_cells)})"
+        values[r][3] = f"=SUM({'; '.join(target_cells)})"
+        values[r][4] = f'=IF(C{r_num}>0; D{r_num}/C{r_num}; "")'
+        values[r][5] = f'=IF(C{r_num}>0; B{r_num}/C{r_num}; "")'
+        values[r][6] = f'=IF(D{r_num}>0; B{r_num}/D{r_num}; "")'
+
+        # Вычисление Month-over-Month динамики
+        if m_idx == 0:
+            values[r][7] = ""
+            values[r][8] = ""
+        else:
+            prev_r_num = r_num - 1
+            values[r][7] = f'=IF(D{prev_r_num}>0; (D{r_num}-D{prev_r_num})/D{prev_r_num}; "")'
+            values[r][8] = f'=IF(G{prev_r_num}>0; (G{r_num}-G{prev_r_num})/G{prev_r_num}; "")'
+
+    # Строка ИТОГО таблицы по месяцам
+    r_itogo_m = 7 + num_months
+    r_itogo_m_num = r_itogo_m + 1
+    values[r_itogo_m][0] = "ИТОГО"
+    values[r_itogo_m][1] = f"=SUM(B8:B{r_itogo_m})"
+    values[r_itogo_m][2] = f"=SUM(C8:C{r_itogo_m})"
+    values[r_itogo_m][3] = f"=SUM(D8:D{r_itogo_m})"
+    values[r_itogo_m][4] = f'=IF(C{r_itogo_m_num}>0; D{r_itogo_m_num}/C{r_itogo_m_num}; "")'
+    values[r_itogo_m][5] = f'=IF(C{r_itogo_m_num}>0; B{r_itogo_m_num}/C{r_itogo_m_num}; "")'
+    values[r_itogo_m][6] = f'=IF(D{r_itogo_m_num}>0; B{r_itogo_m_num}/D{r_itogo_m_num}; "")'
+    values[r_itogo_m][7] = ""
+    values[r_itogo_m][8] = ""
+
+    # Раздел 2: Эффективность по каналам за все время
+    r_sec2_hdr = r_itogo_m + 3
+    values[r_sec2_hdr][0] = "ЭФФЕКТИВНОСТЬ ПО КАНАЛАМ (ЗА ВСЕ ВРЕМЯ)"
+
+    r_sec2_tbl_hdr = r_sec2_hdr + 1
+    values[r_sec2_tbl_hdr] = [
+        "Источник", "Бюджет, ₽", "Всего лидов", "Целевых лидов", 
+        "Конверсия в целевой, %", "Цена лида, ₽", "Цена целевого лида, ₽",
+        "Доля бюджета, %", "Доля целевых, %"
+    ]
+
+    # Строки данных по каналам
+    start_c_row = r_sec2_tbl_hdr + 1
+    r_itogo_c = start_c_row + num_channels
+    r_itogo_c_num = r_itogo_c + 1
+
+    for s_idx, src in enumerate(TABLE_ROWS):
+        r = start_c_row + s_idx
+        r_num = r + 1
+
+        # Формулы суммирования ячеек конкретного канала по всем неделям всех месяцев:
+        # Строка канала s_idx в неделе шаблона: 9 + idx * 28 + s_idx (бюджет J, всего лидов G, целевых H)
+        budget_cells = []
+        leads_cells = []
+        target_cells = []
+
+        for m_title, m_yr, m_mn, n_w in months_data:
+            for idx in range(n_w):
+                row_in_sheet = 9 + idx * 28 + s_idx
+                budget_cells.append(f"'{m_title}'!J{row_in_sheet}")
+                leads_cells.append(f"'{m_title}'!G{row_in_sheet}")
+                target_cells.append(f"'{m_title}'!H{row_in_sheet}")
+
+        values[r][0] = src
+        values[r][1] = f"=SUM({'; '.join(budget_cells)})"
+        values[r][2] = f"=SUM({'; '.join(leads_cells)})"
+        values[r][3] = f"=SUM({'; '.join(target_cells)})"
+        values[r][4] = f'=IF(C{r_num}>0; D{r_num}/C{r_num}; "")'
+        values[r][5] = f'=IF(C{r_num}>0; B{r_num}/C{r_num}; "")'
+        values[r][6] = f'=IF(D{r_num}>0; B{r_num}/D{r_num}; "")'
+
+        # Вычисление долей бюджета и целевых лидов по каналам
+        values[r][7] = f'=IF(B{r_itogo_c_num}>0; B{r_num}/B{r_itogo_c_num}; "")'
+        values[r][8] = f'=IF(D{r_itogo_c_num}>0; D{r_num}/D{r_itogo_c_num}; "")'
+
+    # Строка ИТОГО таблицы по каналам
+    values[r_itogo_c][0] = "ИТОГО"
+    values[r_itogo_c][1] = f"=SUM(B{start_c_row+1}:B{r_itogo_c})"
+    values[r_itogo_c][2] = f"=SUM(C{start_c_row+1}:C{r_itogo_c})"
+    values[r_itogo_c][3] = f"=SUM(D{start_c_row+1}:D{r_itogo_c})"
+    values[r_itogo_c][4] = f'=IF(C{r_itogo_c_num}>0; D{r_itogo_c_num}/C{r_itogo_c_num}; "")'
+    values[r_itogo_c][5] = f'=IF(C{r_itogo_c_num}>0; B{r_itogo_c_num}/C{r_itogo_c_num}; "")'
+    values[r_itogo_c][6] = f'=IF(D{r_itogo_c_num}>0; B{r_itogo_c_num}/D{r_itogo_c_num}; "")'
+    values[r_itogo_c][7] = ""
+    values[r_itogo_c][8] = ""
+
+    # ── 5. Оформление и Стилизирование (batchUpdate) ─────────────────────────
+    def add_merge(s_r, e_r, s_c, e_c):
+        requests_list.append({
+            "mergeCells": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": s_r,
+                    "endRowIndex": e_r + 1,
+                    "startColumnIndex": s_c,
+                    "endColumnIndex": e_c + 1,
+                },
+                "mergeType": "MERGE_ALL",
+            }
+        })
+
+    def format_range(s_r, e_r, s_c, e_c, bg_hex=None, fg_hex=None, size=9, bold=False, italic=False, align="CENTER", num_pattern=None):
+        cell_format = {}
+        fields = []
+
+        if bg_hex:
+            cell_format["backgroundColor"] = hex_to_rgb(bg_hex)
+            fields.append("backgroundColor")
+
+        text_fmt = {}
+        if fg_hex:
+            text_fmt["foregroundColor"] = hex_to_rgb(fg_hex)
+        text_fmt["fontSize"] = size
+        text_fmt["bold"] = bold
+        text_fmt["italic"] = italic
+        cell_format["textFormat"] = text_fmt
+        fields.append("textFormat")
+
+        cell_format["horizontalAlignment"] = align
+        cell_format["verticalAlignment"] = "MIDDLE"
+        fields.extend(["horizontalAlignment", "verticalAlignment"])
+
+        if num_pattern:
+            cell_format["numberFormat"] = {
+                "type": "CURRENCY" if "₽" in num_pattern else ("PERCENT" if "%" in num_pattern else "NUMBER"),
+                "pattern": num_pattern
+            }
+            fields.append("numberFormat")
+
+        border = make_border("#CBD5E1")
+        cell_format["borders"] = {
+            "top": border,
+            "bottom": border,
+            "left": border,
+            "right": border
+        }
+        fields.append("borders")
+
+        requests_list.append({
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": s_r,
+                    "endRowIndex": e_r + 1,
+                    "startColumnIndex": s_c,
+                    "endColumnIndex": e_c + 1,
+                },
+                "cell": {
+                    "userEnteredFormat": cell_format
+                },
+                "fields": f"userEnteredFormat({','.join(fields)})"
+            }
+        })
+
+    # Стилизация заголовка дашборда
+    add_merge(0, 0, 0, 8)
+    format_range(0, 0, 0, 8, bg_hex="#1E293B", fg_hex="#FFFFFF", size=13, bold=True)
+
+    # Стилизация KPI-карточек
+    format_range(2, 2, 1, 5, bg_hex="#475569", fg_hex="#FFFFFF", size=9, bold=True)
+    format_range(3, 3, 1, 5, bg_hex="#F8FAFC", size=14, bold=True)
+
+    # Форматы чисел в KPI карточках
+    format_range(3, 3, 1, 1, bg_hex="#F8FAFC", size=14, bold=True, num_pattern="#,##0\" ₽\"")
+    format_range(3, 3, 2, 3, bg_hex="#F8FAFC", size=14, bold=True, num_pattern="#,##0")
+    format_range(3, 3, 4, 4, bg_hex="#F8FAFC", size=14, bold=True, num_pattern="0.0%")
+    format_range(3, 3, 5, 5, bg_hex="#F8FAFC", size=14, bold=True, num_pattern="#,##0\" ₽\"")
+
+    # Секция 1: Заголовок и шапка таблицы по месяцам
+    add_merge(5, 5, 0, 8)
+    format_range(5, 5, 0, 8, bg_hex="#475569", fg_hex="#FFFFFF", size=11, bold=True, align="LEFT")
+    format_range(6, 6, 0, 8, bg_hex="#334155", fg_hex="#FFFFFF", size=10, bold=True)
+
+    # Данные таблицы по месяцам
+    for m_idx in range(num_months):
+        r = 7 + m_idx
+        bg = "#FFFFFF" if m_idx % 2 == 0 else "#F8FAFC"
+        format_range(r, r, 0, 8, bg_hex=bg, size=9)
+        format_range(r, r, 0, 0, bg_hex=bg, size=9, bold=True, align="LEFT")
+        format_range(r, r, 1, 1, bg_hex=bg, size=9, align="RIGHT", num_pattern="#,##0\" ₽\"")
+        format_range(r, r, 2, 3, bg_hex=bg, size=9, num_pattern="#,##0")
+        format_range(r, r, 4, 4, bg_hex=bg, size=9, num_pattern="0.0%")
+        format_range(r, r, 5, 6, bg_hex=bg, size=9, align="RIGHT", num_pattern="#,##0\" ₽\"")
+        format_range(r, r, 7, 8, bg_hex=bg, size=9, num_pattern="0.0%")
+
+    # ИТОГО таблицы по месяцам
+    format_range(r_itogo_m, r_itogo_m, 0, 8, bg_hex="#E2E8F0", size=10, bold=True)
+    format_range(r_itogo_m, r_itogo_m, 0, 0, bg_hex="#E2E8F0", size=10, bold=True, align="LEFT")
+    format_range(r_itogo_m, r_itogo_m, 1, 1, bg_hex="#E2E8F0", size=10, bold=True, align="RIGHT", num_pattern="#,##0\" ₽\"")
+    format_range(r_itogo_m, r_itogo_m, 2, 3, bg_hex="#E2E8F0", size=10, bold=True, num_pattern="#,##0")
+    format_range(r_itogo_m, r_itogo_m, 4, 4, bg_hex="#E2E8F0", size=10, bold=True, num_pattern="0.0%")
+    format_range(r_itogo_m, r_itogo_m, 5, 6, bg_hex="#E2E8F0", size=10, bold=True, align="RIGHT", num_pattern="#,##0\" ₽\"")
+    format_range(r_itogo_m, r_itogo_m, 7, 8, bg_hex="#E2E8F0", size=10, bold=True, num_pattern="0.0%")
+
+    # Секция 2: Заголовок и шапка таблицы по каналам
+    add_merge(r_sec2_hdr, r_sec2_hdr, 0, 8)
+    format_range(r_sec2_hdr, r_sec2_hdr, 0, 8, bg_hex="#475569", fg_hex="#FFFFFF", size=11, bold=True, align="LEFT")
+    format_range(r_sec2_tbl_hdr, r_sec2_tbl_hdr, 0, 8, bg_hex="#334155", fg_hex="#FFFFFF", size=10, bold=True)
+
+    # Данные таблицы по каналам
+    for s_idx in range(num_channels):
+        r = start_c_row + s_idx
+        bg = "#FFFFFF" if s_idx % 2 == 0 else "#F8FAFC"
+        format_range(r, r, 0, 8, bg_hex=bg, size=9)
+        format_range(r, r, 0, 0, bg_hex=bg, size=9, bold=True, align="LEFT")
+        format_range(r, r, 1, 1, bg_hex=bg, size=9, align="RIGHT", num_pattern="#,##0\" ₽\"")
+        format_range(r, r, 2, 3, bg_hex=bg, size=9, num_pattern="#,##0")
+        format_range(r, r, 4, 4, bg_hex=bg, size=9, num_pattern="0.0%")
+        format_range(r, r, 5, 6, bg_hex=bg, size=9, align="RIGHT", num_pattern="#,##0\" ₽\"")
+        format_range(r, r, 7, 8, bg_hex=bg, size=9, num_pattern="0.0%")
+
+    # ИТОГО таблицы по каналам
+    format_range(r_itogo_c, r_itogo_c, 0, 8, bg_hex="#E2E8F0", size=10, bold=True)
+    format_range(r_itogo_c, r_itogo_c, 0, 0, bg_hex="#E2E8F0", size=10, bold=True, align="LEFT")
+    format_range(r_itogo_c, r_itogo_c, 1, 1, bg_hex="#E2E8F0", size=10, bold=True, align="RIGHT", num_pattern="#,##0\" ₽\"")
+    format_range(r_itogo_c, r_itogo_c, 2, 3, bg_hex="#E2E8F0", size=10, bold=True, num_pattern="#,##0")
+    format_range(r_itogo_c, r_itogo_c, 4, 4, bg_hex="#E2E8F0", size=10, bold=True, num_pattern="0.0%")
+    format_range(r_itogo_c, r_itogo_c, 5, 6, bg_hex="#E2E8F0", size=10, bold=True, align="RIGHT", num_pattern="#,##0\" ₽\"")
+    format_range(r_itogo_c, r_itogo_c, 7, 8, bg_hex="#E2E8F0", size=10, bold=True, num_pattern="0.0%")
+
+    # ── 6. Размеры ячеек (Ширина колонок) ────────────────────────────────────
+    col_widths = {
+        0: 220,  # Месяц / Источник
+        1: 130,  # Бюджет
+        2: 110,  # Всего лидов
+        3: 110,  # Целевых лидов
+        4: 150,  # Конверсия в целевой, %
+        5: 140,  # Цена лида, ₽
+        6: 150,  # Цена целевого лида, ₽
+        7: 150,  # Динамика целевых / Доля бюджета, %
+        8: 150,  # Динамика стоимости / Доля целевых, %
+    }
+    for col_idx, width in col_widths.items():
+        requests_list.append({
+            "updateDimensionProperties": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "dimension": "COLUMNS",
+                    "startIndex": col_idx,
+                    "endIndex": col_idx + 1
+                },
+                "properties": {"pixelSize": width},
+                "fields": "pixelSize"
+            }
+        })
+
+    # Высота строк
+    for r in range(row_count):
+        h = 25
+        if r == 0:
+            h = 50
+        elif r == 2:
+            h = 24
+        elif r == 3:
+            h = 35
+        elif r in (5, 6, r_sec2_hdr, r_sec2_tbl_hdr):
+            h = 30
+        elif r in (1, 4, r_itogo_m + 1, r_itogo_m + 2):
+            h = 15
+
+        requests_list.append({
+            "updateDimensionProperties": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "dimension": "ROWS",
+                    "startIndex": r,
+                    "endIndex": r + 1
+                },
+                "properties": {"pixelSize": h},
+                "fields": "pixelSize"
+            }
+        })
+
+    # ── 7. Выполнение запросов на запись ─────────────────────────────────────
+    # Записываем формулы и тексты в ячейки
+    range_name = f"'Дашборд'!A1"
+    body = {"values": values}
+    sheets.values().update(
+        spreadsheetId=spreadsheet_id,
+        range=range_name,
+        valueInputOption="USER_ENTERED",
+        body=body,
+    ).execute()
+
+    # Запускаем batchUpdate форматирования
+    if requests_list:
+        sheets.batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={"requests": requests_list},
+        ).execute()
+
+    log.info("✅ Аналитический дашборд успешно обновлен!")
+
+
 # ---------------------------------------------------------------------------
 # Главная функция
 # ---------------------------------------------------------------------------
@@ -1183,6 +1618,12 @@ def main():
     requests_list = build_update_requests(sheet_id, header_row, windows, aggregated)
     write_to_google_sheets(sheets, spreadsheet_id, tab_name, sheet_id, requests_list)
 
+    # 7. Обновляем аналитический дашборд на первой вкладке
+    try:
+        update_dashboard(sheets, spreadsheet_id)
+    except Exception as e:
+        log.error("Ошибка при обновлении дашборда: %s", e, exc_info=True)
+
     log.info("=" * 60)
     log.info("Скрипт завершён успешно.")
     log.info("=" * 60)
@@ -1190,3 +1631,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

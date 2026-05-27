@@ -16,7 +16,8 @@ from script import (
     find_week_block_row,
     create_month_template,
     build_update_requests,
-    write_to_google_sheets
+    write_to_google_sheets,
+    update_dashboard
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -98,6 +99,13 @@ def main():
             backfill_week(sheets, webhook_url, spreadsheet_id, wed)
         except Exception as e:
             log.error("Ошибка при обработке недели %s: %s", wed, e, exc_info=True)
+
+    # Обновляем аналитический дашборд после завершения бэкфилла
+    try:
+        log.info("Обновление аналитического дашборда...")
+        update_dashboard(sheets, spreadsheet_id)
+    except Exception as e:
+        log.error("Ошибка при обновлении дашборда: %s", e, exc_info=True)
 
     log.info("Бэкфилл успешно завершен для всех указанных недель!")
 
