@@ -354,12 +354,12 @@ def get_source_category(lead: dict) -> str:
     return "Прочий трафик"
 
 
-def aggregate_leads(windows: dict, all_leads: list[dict], tail_leads: list[dict]) -> dict:
+def aggregate_leads(windows: dict, all_leads: list[dict]) -> dict:
     """
-    Агрегирует лиды по правилам А и Б.
+    Агрегирует лиды по дням недели и целевому статусу.
 
-    Правило А: Считаем все лиды Ср-Вт по дням и источникам.
-    Правило Б: Целевые лиды Ср-Пн + «хвосты» прошлого Вт.
+    Считает все созданные лиды за период Ср-Вт по дням и источникам (без EXCLUDED_STATUSES).
+    Целевые лиды считаются из этих же лидов (статус не в NON_TARGET_STATUSES).
 
     Возвращает структуру:
     {
@@ -373,7 +373,6 @@ def aggregate_leads(windows: dict, all_leads: list[dict], tail_leads: list[dict]
     days = windows["days"]          # [(date, label), ...]
     current_wed = windows["current_wed"]
     current_tue = windows["current_tue"]
-    prev_tue = windows["prev_tue"]
 
     # Словарь date -> label для быстрого поиска
     date_to_label: dict[date, str] = {d: lbl for d, lbl in days}
@@ -387,15 +386,11 @@ def aggregate_leads(windows: dict, all_leads: list[dict], tail_leads: list[dict]
         daily[row]["Итого"] = 0
         targeted[row] = 0
 
-    # ── Правило А: Дневная разбивка всех лидов ──────────────────────────────
     for lead in all_leads:
-        # Исключаем мусорные лиды из общей статистики по дням
         status = lead.get("STATUS_ID", "")
-        if status in EXCLUDED_STATUSES:
-            continue
+        raw_date = lead.get("DATE_CREATE", "")
 
         # Дата создания из API: "2026-05-27T14:30:00+03:00"
-        raw_date = lead.get("DATE_CREATE", "")
         try:
             created_dt = datetime.fromisoformat(raw_date).astimezone(TZ)
             created_date = created_dt.date()
@@ -407,62 +402,17 @@ def aggregate_leads(windows: dict, all_leads: list[dict], tail_leads: list[dict]
         if category not in daily:
             continue  # Неизвестный источник — пропускаем
 
+        # Проверяем, попадает ли дата создания в наш отчетный период (Ср-Вт)
         label = date_to_label.get(created_date)
         if label:
-            daily[category][label] += 1
-            daily[category]["Итого"] += 1
+            # 1. Считаем лид в общее количество (если он не мусорный)
+            if status not in EXCLUDED_STATUSES:
+                daily[category][label] += 1
+                daily[category]["Итого"] += 1
 
-    # ── Правило Б: Целевые лиды Ср-Пн (без Вт!) ────────────────────────────
-    # Граница: от current_wed до (current_tue - 1 день) = Понедельника
-    current_mon = current_tue - timedelta(days=1)
-
-    for lead in all_leads:
-        raw_date = lead.get("DATE_CREATE", "")
-        status = lead.get("STATUS_ID", "")
-
-        try:
-            created_date = datetime.fromisoformat(raw_date).astimezone(TZ).date()
-        except (ValueError, TypeError):
-            continue
-
-        # Лид создан в Вт текущего периода — ПРОПУСКАЕМ (переносится на след. период)
-        if created_date == current_tue:
-            continue
-
-        # Лид создан в Ср-Пн и является целевым (все статусы кроме NON_TARGET_STATUSES)
-        if current_wed <= created_date <= current_mon and status not in NON_TARGET_STATUSES:
-            category = get_source_category(lead)
-            if category in targeted:
+            # 2. Считаем лид в целевые (если статус целевой)
+            if status not in NON_TARGET_STATUSES:
                 targeted[category] += 1
-
-    # ── Правило Б: «Хвосты» прошлого Вторника ───────────────────────────────
-    # tail_leads — лиды, созданные во Вт прошлой недели и уже ставшие целевыми
-    # (API вернул их без фильтра по статусу, фильтруем в Python по дате изменения и целевому статусу)
-    for lead in tail_leads:
-        status = lead.get("STATUS_ID", "")
-        raw_modify = lead.get("DATE_MODIFY", "")
-
-        # Проверяем, что статус стал целевым в текущем отчётном периоде
-        # (дата изменения >= current_wed)
-        try:
-            modify_date = datetime.fromisoformat(raw_modify).astimezone(TZ).date()
-        except (ValueError, TypeError):
-            modify_date = None
-
-        if status in NON_TARGET_STATUSES:
-            continue
-
-        # Если дата изменения не попала в текущий период — пропускаем
-        if modify_date and not (current_wed <= modify_date <= current_tue):
-            continue
-
-        category = get_source_category(lead)
-        if category in targeted:
-            targeted[category] += 1
-            log.info(
-                "Хвост Вт: лид ID=%s добавлен в целевые (%s)",
-                lead.get("ID"), category,
-            )
 
     log.info("Агрегация завершена. Целевые: %s", targeted)
     return {"daily": daily, "targeted": targeted}
@@ -2149,46 +2099,30 @@ def update_dashboard(sheets, spreadsheet_id: str):
 # Главная функция
 # ---------------------------------------------------------------------------
 
-def main():
+def process_week(sheets, webhook_url: str, spreadsheet_id: str, target_wed: date):
+    """Выполняет полный цикл обработки и обновления данных за одну отчетную неделю."""
     log.info("=" * 60)
-    log.info("Запуск скрипта еженедельного отчёта по лидам")
+    log.info("ОБРАБОТКА НЕДЕЛИ С: %s", target_wed.strftime("%d.%m.%Y"))
     log.info("=" * 60)
 
-    # 1. Читаем переменные среды
-    webhook_url          = get_env("BITRIX24_WEBHOOK_URL")
-    service_account_json = get_env("GOOGLE_SERVICE_ACCOUNT_JSON")
-    spreadsheet_id       = get_env("SPREADSHEET_ID")
-
-    # 2. Вычисляем временные окна
-    windows = compute_date_windows()
-
+    # 1. Вычисляем временные окна для конкретной среды
+    windows = compute_date_windows(target_wed)
     current_wed = windows["current_wed"]
     current_tue = windows["current_tue"]
-    prev_tue    = windows["prev_tue"]
 
-    # 3. Запрашиваем лиды из Битрикс24
-    # Основной пул: Ср прошлой — Вт текущей
+    # 2. Запрашиваем лиды из CRM за этот период (только Ср-Вт этой недели)
     all_leads = fetch_leads(webhook_url, current_wed, current_tue)
 
-    # «Хвосты» прошлого Вт: лиды, созданные во Вт прошлой недели.
-    # Так как целевые статусы теперь определяются через исключение (все кроме NON_TARGET_STATUSES),
-    # забираем все лиды за прошлый Вт и затем фильтруем по DATE_MODIFY и статусу в Python.
-    tail_leads = fetch_leads(webhook_url, prev_tue, prev_tue)
+    # 3. Агрегируем данные (целевые считаются строго по дате создания)
+    aggregated = aggregate_leads(windows, all_leads)
 
-    # 4. Агрегируем данные
-    aggregated = aggregate_leads(windows, all_leads, tail_leads)
-
-    # 4.1. Получаем расходы Яндекс.Директ
-    #      Приоритет 0: CSV-файл в репозитории (кладёте вручную, самый надёжный)
-    #      Приоритет 1: официальный API (быстро, точно)
-    #      Приоритет 2: браузерная автоматизация (если API недоступен)
+    # 4. Получаем расходы Яндекс.Директ
     yandex_token    = os.environ.get("YANDEX_DIRECT_TOKEN", "").strip()
     yandex_login    = os.environ.get("YANDEX_DIRECT_CLIENT_LOGIN", "").strip()
     yandex_browser_login    = os.environ.get("YANDEX_LOGIN", "").strip()
     yandex_browser_password = os.environ.get("YANDEX_PASSWORD", "").strip()
     yandex_secret_answer    = os.environ.get("YANDEX_SECRET_ANSWER", "").strip() or None
-    aggregated["budgets"] = {}
-
+    
     yandex_cost = None
 
     # Попытка 0: CSV-файл(ы) из репозитория
@@ -2225,11 +2159,7 @@ def main():
     else:
         log.warning("Расходы Яндекс.Директ не получены ни из CSV, ни через API, ни через браузер.")
 
-
     # 5. Работаем с Google Sheets
-    sheets = get_sheets_service(service_account_json)
-
-    # Название вкладки = текущий месяц на русском (напр. "Май 2026")
     MONTH_NAMES_RU = {
         1: "Январь", 2: "Февраль", 3: "Март",
         4: "Апрель", 5: "Май",     6: "Июнь",
@@ -2251,8 +2181,7 @@ def main():
 
     if header_row is None:
         log.error(
-            "❌ Не удалось найти или создать блок недели для даты %s на листе '%s'.\n"
-            "   Скрипт завершает работу без записи данных.",
+            "❌ Не удалось найти или создать блок недели для даты %s на листе '%s'.",
             current_wed, tab_name
         )
         return
@@ -2261,7 +2190,39 @@ def main():
     requests_list = build_update_requests(sheet_id, header_row, windows, aggregated)
     write_to_google_sheets(sheets, spreadsheet_id, tab_name, sheet_id, requests_list)
 
-    # 7. Обновляем аналитический дашборд на первой вкладке
+
+def main():
+    log.info("=" * 60)
+    log.info("Запуск скрипта еженедельного отчёта по лидам")
+    log.info("=" * 60)
+
+    # 1. Читаем переменные среды
+    webhook_url          = get_env("BITRIX24_WEBHOOK_URL")
+    service_account_json = get_env("GOOGLE_SERVICE_ACCOUNT_JSON")
+    spreadsheet_id       = get_env("SPREADSHEET_ID")
+
+    sheets = get_sheets_service(service_account_json)
+
+    # 2. Вычисляем текущую среду отчетной недели
+    windows = compute_date_windows()
+    current_wed = windows["current_wed"]
+
+    # 3. Обновляем две недели: предыдущую (чтобы окончательно зафиксировать) и текущую
+    prev_wed = current_wed - timedelta(days=7)
+
+    log.info("--- ШАГ 1: Обновление ПРЕДЫДУЩЕЙ недели (%s) ---", prev_wed)
+    try:
+        process_week(sheets, webhook_url, spreadsheet_id, prev_wed)
+    except Exception as e:
+        log.error("Ошибка при обновлении предыдущей недели %s: %s", prev_wed, e, exc_info=True)
+
+    log.info("--- ШАГ 2: Обновление ТЕКУЩЕЙ недели (%s) ---", current_wed)
+    try:
+        process_week(sheets, webhook_url, spreadsheet_id, current_wed)
+    except Exception as e:
+        log.error("Ошибка при обновлении текущей недели %s: %s", current_wed, e, exc_info=True)
+
+    # 4. Обновляем аналитический дашборд на первой вкладке
     try:
         update_dashboard(sheets, spreadsheet_id)
     except Exception as e:
