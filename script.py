@@ -1791,20 +1791,80 @@ def update_dashboard(sheets, spreadsheet_id: str):
         "Динамика целевых, %", "Динамика стоимости, %"
     ]
 
+    # Собираем все недели со всех листов месяцев
+    all_weeks = []
+    for m_title, year, month_num, n_w in months_data:
+        d = date(year, month_num, 1)
+        wednesdays = []
+        while d.month == month_num:
+            if d.weekday() == 2:  # Среда
+                wednesdays.append(d)
+            d += timedelta(days=1)
+            
+        for idx, wed in enumerate(wednesdays):
+            all_weeks.append({
+                "sheet_title": m_title,
+                "week_idx": idx,
+                "wed": wed,
+                "row_itogo": 19 + idx * 28,
+            })
+
     for m_idx, (m_title, m_yr, m_mn, n_w) in enumerate(months_data):
         r = 7 + m_idx
         r_num = r + 1
 
-        # Формулы для суммирования показателей по всем неделям месяца:
-        # Строка ИТОГО недели в шаблоне: 19 + idx * 28 (бюджет I, всего лидов G, целевых H)
-        budget_cells = [f"'{m_title}'!I{19 + idx * 28}" for idx in range(n_w)]
-        leads_cells = [f"'{m_title}'!G{19 + idx * 28}" for idx in range(n_w)]
-        target_cells = [f"'{m_title}'!H{19 + idx * 28}" for idx in range(n_w)]
+        budget_parts = []
+        leads_parts = []
+        target_parts = []
+
+        for wk in all_weeks:
+            sheet = wk["sheet_title"]
+            row = wk["row_itogo"]
+            wed = wk["wed"]
+
+            # Определяем столбцы и их даты на этой неделе
+            cols_def = [
+                ("B", wed, 1),
+                ("C", wed + timedelta(days=1), 1),
+                ("D", wed + timedelta(days=2), 1),
+                ("E", wed + timedelta(days=5), 3),
+                ("F", wed + timedelta(days=6), 1),
+            ]
+
+            matching_cols = []
+            matching_days_weight = 0
+            for col_letter, col_date, weight in cols_def:
+                if col_date.year == m_yr and col_date.month == m_mn:
+                    matching_cols.append(col_letter)
+                    matching_days_weight += weight
+
+            if not matching_cols:
+                continue
+
+            if len(matching_cols) == 5:
+                # Вся неделя целиком в этом календарном месяце
+                budget_parts.append(f"'{sheet}'!I{row}")
+                leads_parts.append(f"'{sheet}'!G{row}")
+                target_parts.append(f"'{sheet}'!H{row}")
+            else:
+                # Переходящая неделя
+                # 1. Бюджет пропорционально дням
+                budget_parts.append(f"'{sheet}'!I{row}*{matching_days_weight}/7")
+                
+                # 2. Всего лидов - точная сумма совпавших столбцов
+                col_sum_str = "+".join([f"'{sheet}'!{c}{row}" for c in matching_cols])
+                leads_parts.append(f"({col_sum_str})")
+                
+                # 3. Целевые лиды - доля пропорционально лидам этой недели
+                target_parts.append(
+                    f"IF('{sheet}'!G{row}>0; '{sheet}'!H{row}*({col_sum_str})/'{sheet}'!G{row}; 0)"
+                )
 
         values[r][0] = m_title
-        values[r][1] = f"=SUM({'; '.join(budget_cells)})"
-        values[r][2] = f"=SUM({'; '.join(leads_cells)})"
-        values[r][3] = f"=SUM({'; '.join(target_cells)})"
+        values[r][1] = f"={'+'.join(budget_parts)}" if budget_parts else 0
+        values[r][2] = f"={'+'.join(leads_parts)}" if leads_parts else 0
+        values[r][3] = f"={'+'.join(target_parts)}" if target_parts else 0
+
         values[r][4] = f'=IF(C{r_num}>0; D{r_num}/C{r_num}; "")'
         values[r][5] = f'=IF(C{r_num}>0; B{r_num}/C{r_num}; "")'
         values[r][6] = f'=IF(D{r_num}>0; B{r_num}/D{r_num}; "")'
