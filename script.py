@@ -2117,6 +2117,7 @@ def process_week(sheets, webhook_url: str, spreadsheet_id: str, target_wed: date
     aggregated = aggregate_leads(windows, all_leads)
 
     # 4. Получаем расходы Яндекс.Директ
+    aggregated["budgets"] = {}
     yandex_token    = os.environ.get("YANDEX_DIRECT_TOKEN", "").strip()
     yandex_login    = os.environ.get("YANDEX_DIRECT_CLIENT_LOGIN", "").strip()
     yandex_browser_login    = os.environ.get("YANDEX_LOGIN", "").strip()
