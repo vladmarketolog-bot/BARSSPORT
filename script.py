@@ -692,7 +692,6 @@ def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: 
         d_mon = mon.strftime("%d.%m")
         d_tue = tue.strftime("%d.%m")
 
-        # ── Первая таблица: Данные по лидам ─────────────────────────────────
         # Заголовки (строка start_row)
         values[start_row][0] = "Источник"
         values[start_row][1] = "Период"
@@ -703,6 +702,8 @@ def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: 
         values[start_row][10] = "Цена целевого лида"
         values[start_row][11] = "Динамика количества целевого лида относительной прошлой недели, %"
         values[start_row][12] = "Динамика стоимости целевого лида относительной прошлой недели, %"
+        values[start_row][13] = "Мусорные"
+        values[start_row][14] = "Не обработано"
 
         # Подзаголовки дат (строка start_row + 1)
         values[start_row+1][1] = d_wed
@@ -725,7 +726,7 @@ def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: 
         itog_idx = start_row + 2 + len(TABLE_ROWS)
         r_total = itog_idx + 1
         values[itog_idx][0] = "ИТОГО"
-        for col_idx in range(1, 9):
+        for col_idx in list(range(1, 8)) + [8, 13, 14]:
             col_letter = chr(65 + col_idx)  # 65 = 'A'
             start_r = r_total - len(TABLE_ROWS)
             end_r = r_total - 1
@@ -746,18 +747,20 @@ def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: 
 
         # ── Слияния заголовков ──
         add_merge(start_row, start_row + 1, 0, 0)   # Источник
+        add_merge(start_row, start_row, 1, 5)        # Period (B-F)
         add_merge(start_row, start_row + 1, 6, 6)   # Итого за неделю
         add_merge(start_row, start_row + 1, 7, 7)   # Кол-во целевых
         add_merge(start_row, start_row + 1, 8, 8)   # Бюджет
         add_merge(start_row, start_row + 1, 9, 9)   # Общая цена лида
         add_merge(start_row, start_row + 1, 10, 10) # Цена целевого лида
-        add_merge(start_row, start_row + 1, 11, 11) # Динамика %
-        add_merge(start_row, start_row + 1, 12, 12) # Динамика %
-        add_merge(start_row, start_row, 1, 5)        # Period
+        add_merge(start_row, start_row + 1, 11, 11) # Динамика целевых %
+        add_merge(start_row, start_row + 1, 12, 12) # Динамика стоимости %
+        add_merge(start_row, start_row + 1, 13, 13) # Мусорные
+        add_merge(start_row, start_row + 1, 14, 14) # Не обработано
 
         # ── Стили заголовков первой таблицы ──
-        format_range(start_row, start_row, 0, 12, bg_hex="#1E293B", fg_hex="#FFFFFF", size=10, bold=True)
-        format_range(start_row + 1, start_row + 1, 0, 12, bg_hex="#334155", fg_hex="#FFFFFF", size=9, bold=True)
+        format_range(start_row, start_row, 0, 14, bg_hex="#1E293B", fg_hex="#FFFFFF", size=10, bold=True)
+        format_range(start_row + 1, start_row + 1, 0, 14, bg_hex="#334155", fg_hex="#FFFFFF", size=9, bold=True)
 
         # ── Стили строк данных ──
         for s_idx, src in enumerate(TABLE_ROWS):
@@ -769,17 +772,18 @@ def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: 
             format_range(r_idx, r_idx, 1, 5, bg_hex=bg, size=9, num_pattern="#,##0")
             format_range(r_idx, r_idx, 6, 6, bg_hex=bg, size=9, bold=True, num_pattern="#,##0")
             format_range(r_idx, r_idx, 7, 7, bg_hex="#ECFDF5", size=9, bold=True, num_pattern="#,##0")
-            format_range(r_idx, r_idx, 8, 8, bg_hex="#EFF6FF", size=9, bold=True, num_pattern="#,##0")
-            format_range(r_idx, r_idx, 9, 9, bg_hex="#FEE2E2", size=9, bold=True, num_pattern="#,##0")
-            format_range(r_idx, r_idx, 10, 10, bg_hex="#FEF3C7", size=9, align="RIGHT", num_pattern="#,##0\" ₽\"")
-            format_range(r_idx, r_idx, 11, 12, bg_hex=bg, size=9, align="RIGHT", num_pattern="#,##0\" ₽\"")
-            format_range(r_idx, r_idx, 13, 14, bg_hex=bg, size=9, num_pattern="0.0%")
+            format_range(r_idx, r_idx, 8, 8, bg_hex="#FEF3C7", size=9, align="RIGHT", num_pattern="#,##0\" ₽\"")
+            format_range(r_idx, r_idx, 9, 10, bg_hex="#FEE2E2", size=9, align="RIGHT", num_pattern="#,##0\" ₽\"")
+            format_range(r_idx, r_idx, 11, 12, bg_hex=bg, size=9, align="RIGHT", num_pattern="0.0%")
+            format_range(r_idx, r_idx, 13, 13, bg_hex=bg, size=9, bold=True, num_pattern="#,##0")
+            format_range(r_idx, r_idx, 14, 14, bg_hex="#EFF6FF", size=9, bold=True, num_pattern="#,##0")
 
         # ── Стили строки ИТОГО ──
         format_range(itog_idx, itog_idx, 0, 14, bg_hex="#E2E8F0", size=9, bold=True)
         format_range(itog_idx, itog_idx, 0, 0, bg_hex="#E2E8F0", size=9, bold=True, align="LEFT")
-        format_range(itog_idx, itog_idx, 1, 9, bg_hex="#E2E8F0", size=9, bold=True, num_pattern="#,##0")
-        format_range(itog_idx, itog_idx, 10, 10, bg_hex="#E2E8F0", size=9, bold=True, align="RIGHT", num_pattern="#,##0\" ₽\"")
+        format_range(itog_idx, itog_idx, 1, 7, bg_hex="#E2E8F0", size=9, bold=True, num_pattern="#,##0")
+        format_range(itog_idx, itog_idx, 8, 8, bg_hex="#E2E8F0", size=9, bold=True, align="RIGHT", num_pattern="#,##0\" ₽\"")
+        format_range(itog_idx, itog_idx, 13, 14, bg_hex="#E2E8F0", size=9, bold=True, num_pattern="#,##0")
 
         # ── Стили второй таблицы (Комментарии и планы) ──
         add_merge(comments_header_idx, comments_header_idx, 1, 7)
@@ -890,13 +894,13 @@ def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: 
         1: 70, 2: 70, 3: 70, 4: 70, 5: 70,  # Ср, Чт, Пт, Пн, Вт
         6: 120,  # Итого за неделю
         7: 120,  # Кол-во целевых
-        8: 120,  # Не обработано
-        9: 120,  # Мусорные
-        10: 160, # Израсходованный бюджет
-        11: 140, # Общая цена лида
-        12: 140, # Цена целевого лида
-        13: 140, # Динамика целевых %
-        14: 140, # Динамика стоимости %
+        8: 160,  # Израсходованный бюджет
+        9: 140,  # Общая цена лида
+        10: 140, # Цена целевого лида
+        11: 140, # Динамика целевых %
+        12: 140, # Динамика стоимости %
+        13: 120, # Мусорные
+        14: 120, # Не обработано
     }
 
     for col_idx, width in col_widths.items():
@@ -1540,11 +1544,11 @@ def build_update_requests(
     COL_TUE         = 5   # Столбец F — Вторник
     COL_TOTAL       = 6   # Столбец G — "Итого за неделю"
     COL_TARGETED    = 7   # Столбец H — "Кол-во целевых"
-    COL_UNPROCESSED = 8   # Столбец I — "Не обработано"
-    COL_JUNK        = 9   # Столбец J — "Мусорные"
-    COL_BUDGET      = 10  # Столбец K — "Израсходованный бюджет" (ручной ввод / авто)
-    COL_AVG_LEAD    = 11  # Столбец L — "Общая цена лида" (формула)
-    COL_TGT_LEAD    = 12  # Столбец M — "Цена целевого лида" (формула)
+    COL_BUDGET      = 8   # Столбец I — "Израсходованный бюджет" (ручной ввод / авто)
+    COL_AVG_LEAD    = 9   # Столбец J — "Общая цена лида" (формула)
+    COL_TGT_LEAD    = 10  # Столбец K — "Цена целевого лида" (формула)
+    COL_JUNK        = 13  # Столбец N — "Мусорные"
+    COL_UNPROCESSED = 14  # Столбец O — "Не обработано"
 
     daily = aggregated["daily"]
     targeted = aggregated["targeted"]
@@ -1657,16 +1661,16 @@ def build_update_requests(
         # Формулы (с разделителем ; для русской локали)
         r = data_row_0idx + 1
 
-        # Общая цена лида (Col L)
+        # Общая цена лида (Col J)
         requests_list.append(formula_update(
             data_row_0idx, COL_AVG_LEAD,
-            f'=IF(G{r}>0; K{r}/G{r}; "")'
+            f'=IF(G{r}>0; I{r}/G{r}; "")'
         ))
 
-        # Цена целевого лида (Col M)
+        # Цена целевого лида (Col K)
         requests_list.append(formula_update(
             data_row_0idx, COL_TGT_LEAD,
-            f'=IF(H{r}>0; K{r}/H{r}; "")'
+            f'=IF(H{r}>0; I{r}/H{r}; "")'
         ))
 
     # Для строки ИТОГО
@@ -1883,13 +1887,13 @@ def update_dashboard(sheets, spreadsheet_id: str):
 
             if len(matching_cols) == 5:
                 # Вся неделя целиком в этом календарном месяце
-                budget_parts.append(f"'{sheet}'!K{row}")
+                budget_parts.append(f"'{sheet}'!I{row}")
                 leads_parts.append(f"'{sheet}'!G{row}")
                 target_parts.append(f"'{sheet}'!H{row}")
             else:
                 # Переходящая неделя
                 # 1. Бюджет пропорционально дням
-                budget_parts.append(f"'{sheet}'!K{row}*{matching_days_weight}/7")
+                budget_parts.append(f"'{sheet}'!I{row}*{matching_days_weight}/7")
                 
                 # 2. Всего лидов - точная сумма совпавших столбцов
                 col_sum_str = "+".join([f"'{sheet}'!{c}{row}" for c in matching_cols])
@@ -1952,7 +1956,7 @@ def update_dashboard(sheets, spreadsheet_id: str):
         r_num = r + 1
 
         # Формулы суммирования ячеек конкретного канала по всем неделям всех месяцев:
-        # Строка канала s_idx в неделе шаблона: 9 + idx * 28 + s_idx (бюджет K, всего лидов G, целевых H)
+        # Строка канала s_idx в неделе шаблона: 9 + idx * 28 + s_idx (бюджет I, всего лидов G, целевых H)
         budget_cells = []
         leads_cells = []
         target_cells = []
@@ -1960,7 +1964,7 @@ def update_dashboard(sheets, spreadsheet_id: str):
         for m_title, m_yr, m_mn, n_w in months_data:
             for idx in range(n_w):
                 row_in_sheet = 9 + idx * 28 + s_idx
-                budget_cells.append(f"'{m_title}'!K{row_in_sheet}")
+                budget_cells.append(f"'{m_title}'!I{row_in_sheet}")
                 leads_cells.append(f"'{m_title}'!G{row_in_sheet}")
                 target_cells.append(f"'{m_title}'!H{row_in_sheet}")
 
