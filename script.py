@@ -1624,6 +1624,33 @@ def build_update_requests(
     requests_list.append(cell_update(main_hdr_row, 13, "Мусорные"))
     requests_list.append(cell_update(main_hdr_row, 14, "Не обработано"))
 
+    # Форматируем заголовки колонок 8-14 в темно-синий цвет с белым жирным шрифтом и переносом по словам
+    requests_list.append({
+        "repeatCell": {
+            "range": {
+                "sheetId": sheet_id,
+                "startRowIndex": header_row - 2,
+                "endRowIndex": header_row,
+                "startColumnIndex": 8,
+                "endColumnIndex": 15,
+            },
+            "cell": {
+                "userEnteredFormat": {
+                    "backgroundColor": hex_to_rgb("#1E293B"),
+                    "textFormat": {
+                        "foregroundColor": hex_to_rgb("#FFFFFF"),
+                        "fontSize": 10,
+                        "bold": True
+                    },
+                    "horizontalAlignment": "CENTER",
+                    "verticalAlignment": "MIDDLE",
+                    "wrapStrategy": "WRAP"
+                }
+            },
+            "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)"
+        }
+    })
+
     # Суммируем по каждому источнику
     for row_offset, source_name in enumerate(TABLE_ROWS):
         # header_row - это 1-indexed строка подзаголовков (с датами).
