@@ -632,7 +632,8 @@ def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: 
 
         cell_format["horizontalAlignment"] = align
         cell_format["verticalAlignment"] = "MIDDLE"
-        fields.extend(["horizontalAlignment", "verticalAlignment"])
+        cell_format["wrapStrategy"] = "WRAP"
+        fields.extend(["horizontalAlignment", "verticalAlignment", "wrapStrategy"])
 
         if num_pattern:
             cell_format["numberFormat"] = {
@@ -1699,10 +1700,11 @@ def build_update_requests(
                         "backgroundColor": hex_to_rgb(bg if source_name not in budgets or budgets[source_name] is None else "#FEF3C7"),
                         "numberFormat": {"type": "CURRENCY", "pattern": "#,##0\" ₽\""},
                         "textFormat": {"fontSize": 9},
-                        "horizontalAlignment": "RIGHT"
+                        "horizontalAlignment": "RIGHT",
+                        "wrapStrategy": "WRAP"
                     }
                 },
-                "fields": "userEnteredFormat(backgroundColor,numberFormat,textFormat,horizontalAlignment)"
+                "fields": "userEnteredFormat(backgroundColor,numberFormat,textFormat,horizontalAlignment,wrapStrategy)"
             }
         })
 
@@ -1721,10 +1723,11 @@ def build_update_requests(
                         "backgroundColor": hex_to_rgb("#FEE2E2"),
                         "numberFormat": {"type": "CURRENCY", "pattern": "#,##0\" ₽\""},
                         "textFormat": {"fontSize": 9},
-                        "horizontalAlignment": "RIGHT"
+                        "horizontalAlignment": "RIGHT",
+                        "wrapStrategy": "WRAP"
                     }
                 },
-                "fields": "userEnteredFormat(backgroundColor,numberFormat,textFormat,horizontalAlignment)"
+                "fields": "userEnteredFormat(backgroundColor,numberFormat,textFormat,horizontalAlignment,wrapStrategy)"
             }
         })
 
@@ -1743,10 +1746,11 @@ def build_update_requests(
                         "backgroundColor": hex_to_rgb(bg),
                         "numberFormat": {"type": "PERCENT", "pattern": "0.0%"},
                         "textFormat": {"fontSize": 9},
-                        "horizontalAlignment": "RIGHT"
+                        "horizontalAlignment": "RIGHT",
+                        "wrapStrategy": "WRAP"
                     }
                 },
-                "fields": "userEnteredFormat(backgroundColor,numberFormat,textFormat,horizontalAlignment)"
+                "fields": "userEnteredFormat(backgroundColor,numberFormat,textFormat,horizontalAlignment,wrapStrategy)"
             }
         })
 
@@ -1765,10 +1769,11 @@ def build_update_requests(
                         "backgroundColor": hex_to_rgb(bg),
                         "numberFormat": {"type": "NUMBER", "pattern": "#,##0"},
                         "textFormat": {"fontSize": 9, "bold": True},
-                        "horizontalAlignment": "CENTER"
+                        "horizontalAlignment": "CENTER",
+                        "wrapStrategy": "WRAP"
                     }
                 },
-                "fields": "userEnteredFormat(backgroundColor,numberFormat,textFormat,horizontalAlignment)"
+                "fields": "userEnteredFormat(backgroundColor,numberFormat,textFormat,horizontalAlignment,wrapStrategy)"
             }
         })
 
@@ -1787,10 +1792,11 @@ def build_update_requests(
                         "backgroundColor": hex_to_rgb("#EFF6FF"),
                         "numberFormat": {"type": "NUMBER", "pattern": "#,##0"},
                         "textFormat": {"fontSize": 9, "bold": True},
-                        "horizontalAlignment": "CENTER"
+                        "horizontalAlignment": "CENTER",
+                        "wrapStrategy": "WRAP"
                     }
                 },
-                "fields": "userEnteredFormat(backgroundColor,numberFormat,textFormat,horizontalAlignment)"
+                "fields": "userEnteredFormat(backgroundColor,numberFormat,textFormat,horizontalAlignment,wrapStrategy)"
             }
         })
 
