@@ -91,6 +91,13 @@ EXCLUDED_STATUSES: set[str] = {
     "7",  # Неверный номер
 }
 
+# Статусы необработанных лидов (выносятся в отдельный столбец)
+UNPROCESSED_STATUSES: set[str] = {
+    "NEW",        # Новый лид
+    "14",         # Менеджер назначен
+    "UC_GRB49E",  # НЕДОЗВОН
+}
+
 # Статусы лидов, которые НЕ считаются целевыми (любые другие статусы считаются целевыми)
 NON_TARGET_STATUSES: set[str] = {
     "NEW",        # Новый лид
@@ -382,11 +389,15 @@ def aggregate_leads(windows: dict, all_leads: list[dict]) -> dict:
     # Инициализируем структуру результата
     daily: dict[str, dict[str, int]] = {}
     targeted: dict[str, int] = {}
+    unprocessed: dict[str, int] = {}
+    junk: dict[str, int] = {}
 
     for row in TABLE_ROWS:
         daily[row] = {lbl: 0 for _, lbl in days}
         daily[row]["Итого"] = 0
         targeted[row] = 0
+        unprocessed[row] = 0
+        junk[row] = 0
 
     for lead in all_leads:
         status = lead.get("STATUS_ID", "")
@@ -411,13 +422,24 @@ def aggregate_leads(windows: dict, all_leads: list[dict]) -> dict:
             if status not in EXCLUDED_STATUSES:
                 daily[category][label] += 1
                 daily[category]["Итого"] += 1
+            else:
+                junk[category] += 1
 
             # 2. Считаем лид в целевые (если статус целевой)
             if status not in NON_TARGET_STATUSES:
                 targeted[category] += 1
 
+            # 3. Считаем лид в необработанные (если статус необработанный)
+            if status in UNPROCESSED_STATUSES:
+                unprocessed[category] += 1
+
     log.info("Агрегация завершена. Целевые: %s", targeted)
-    return {"daily": daily, "targeted": targeted}
+    return {
+        "daily": daily,
+        "targeted": targeted,
+        "unprocessed": unprocessed,
+        "junk": junk,
+    }
 
 
 # ---------------------------------------------------------------------------
