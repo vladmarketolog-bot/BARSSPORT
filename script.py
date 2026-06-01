@@ -1615,6 +1615,14 @@ def build_update_requests(
             }
         }
 
+    # Записываем правильные заголовки для колонок L, M, N, O (индексы 11, 12, 13, 14)
+    # На случай, если они были созданы с другими заголовками в шаблоне
+    main_hdr_row = header_row - 2
+    requests_list.append(cell_update(main_hdr_row, 11, "Динамика количества целевого лида относительной прошлой недели, %"))
+    requests_list.append(cell_update(main_hdr_row, 12, "Динамика стоимости целевого лида относительной прошлой недели, %"))
+    requests_list.append(cell_update(main_hdr_row, 13, "Мусорные"))
+    requests_list.append(cell_update(main_hdr_row, 14, "Не обработано"))
+
     # Суммируем по каждому источнику
     for row_offset, source_name in enumerate(TABLE_ROWS):
         # header_row - это 1-indexed строка подзаголовков (с датами).
@@ -1673,14 +1681,167 @@ def build_update_requests(
             f'=IF(H{r}>0; I{r}/H{r}; "")'
         ))
 
+        # Динамическое обновление форматирования и стилей для строк данных
+        bg = "#FFFFFF" if row_offset % 2 == 0 else "#F8FAFC"
+        
+        # Бюджет (Col I) -> валютный
+        requests_list.append({
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": data_row_0idx,
+                    "endRowIndex": data_row_0idx + 1,
+                    "startColumnIndex": 8,
+                    "endColumnIndex": 9,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": hex_to_rgb(bg if source_name not in budgets or budgets[source_name] is None else "#FEF3C7"),
+                        "numberFormat": {"type": "CURRENCY", "pattern": "#,##0\" ₽\""},
+                        "textFormat": {"fontSize": 9},
+                        "horizontalAlignment": "RIGHT"
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor,numberFormat,textFormat,horizontalAlignment)"
+            }
+        })
+
+        # Цены лидов (Col J, K) -> валютные
+        requests_list.append({
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": data_row_0idx,
+                    "endRowIndex": data_row_0idx + 1,
+                    "startColumnIndex": 9,
+                    "endColumnIndex": 11,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": hex_to_rgb("#FEE2E2"),
+                        "numberFormat": {"type": "CURRENCY", "pattern": "#,##0\" ₽\""},
+                        "textFormat": {"fontSize": 9},
+                        "horizontalAlignment": "RIGHT"
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor,numberFormat,textFormat,horizontalAlignment)"
+            }
+        })
+
+        # Динамика % (Col L, M) -> проценты
+        requests_list.append({
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": data_row_0idx,
+                    "endRowIndex": data_row_0idx + 1,
+                    "startColumnIndex": 11,
+                    "endColumnIndex": 13,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": hex_to_rgb(bg),
+                        "numberFormat": {"type": "PERCENT", "pattern": "0.0%"},
+                        "textFormat": {"fontSize": 9},
+                        "horizontalAlignment": "RIGHT"
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor,numberFormat,textFormat,horizontalAlignment)"
+            }
+        })
+
+        # Мусорные (Col N) -> простое число
+        requests_list.append({
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": data_row_0idx,
+                    "endRowIndex": data_row_0idx + 1,
+                    "startColumnIndex": 13,
+                    "endColumnIndex": 14,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": hex_to_rgb(bg),
+                        "numberFormat": {"type": "NUMBER", "pattern": "#,##0"},
+                        "textFormat": {"fontSize": 9, "bold": True},
+                        "horizontalAlignment": "CENTER"
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor,numberFormat,textFormat,horizontalAlignment)"
+            }
+        })
+
+        # Не обработано (Col O) -> простое число, синий фон
+        requests_list.append({
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": data_row_0idx,
+                    "endRowIndex": data_row_0idx + 1,
+                    "startColumnIndex": 14,
+                    "endColumnIndex": 15,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": hex_to_rgb("#EFF6FF"),
+                        "numberFormat": {"type": "NUMBER", "pattern": "#,##0"},
+                        "textFormat": {"fontSize": 9, "bold": True},
+                        "horizontalAlignment": "CENTER"
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor,numberFormat,textFormat,horizontalAlignment)"
+            }
+        })
+
     # Для строки ИТОГО
     itog_row_0idx = header_row + len(TABLE_ROWS)
     requests_list.append(cell_update(itog_row_0idx, COL_SOURCE, "ИТОГО"))
 
-    # ИТОГО считает через формулы SUM и IF, прописанные на шаге создания шаблона,
-    # поэтому нам не нужно вручную перезаписывать ячейки строки ИТОГО.
+    # Форматирование ячеек строки ИТОГО для столбцов I, N, O
+    requests_list.append({
+        "repeatCell": {
+            "range": {
+                "sheetId": sheet_id,
+                "startRowIndex": itog_row_0idx,
+                "endRowIndex": itog_row_0idx + 1,
+                "startColumnIndex": 8,
+                "endColumnIndex": 9,
+            },
+            "cell": {
+                "userEnteredFormat": {
+                    "backgroundColor": hex_to_rgb("#E2E8F0"),
+                    "numberFormat": {"type": "CURRENCY", "pattern": "#,##0\" ₽\""},
+                    "textFormat": {"fontSize": 9, "bold": True},
+                    "horizontalAlignment": "RIGHT"
+                }
+            },
+            "fields": "userEnteredFormat(backgroundColor,numberFormat,textFormat,horizontalAlignment)"
+        }
+    })
 
-    log.info("Подготовлено %d requests для Google Sheets", len(requests_list))
+    requests_list.append({
+        "repeatCell": {
+            "range": {
+                "sheetId": sheet_id,
+                "startRowIndex": itog_row_0idx,
+                "endRowIndex": itog_row_0idx + 1,
+                "startColumnIndex": 13,
+                "endColumnIndex": 15,
+            },
+            "cell": {
+                "userEnteredFormat": {
+                    "backgroundColor": hex_to_rgb("#E2E8F0"),
+                    "numberFormat": {"type": "NUMBER", "pattern": "#,##0"},
+                    "textFormat": {"fontSize": 9, "bold": True},
+                    "horizontalAlignment": "CENTER"
+                }
+            },
+            "fields": "userEnteredFormat(backgroundColor,numberFormat,textFormat,horizontalAlignment)"
+        }
+    })
+
+    log.info("Подготовлено %d requests для Google Sheets (включая форматирование)", len(requests_list))
     return requests_list
 
 
