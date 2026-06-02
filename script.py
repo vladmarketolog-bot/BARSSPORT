@@ -940,13 +940,11 @@ def create_month_template(sheets, spreadsheet_id: str, tab_name: str, sheet_id: 
     log.info("Шаблон на лист '%s' успешно записан.", tab_name)
 
 
-def parse_direct_csv_files(date_from: date, date_to: date) -> float | None:
+def parse_direct_local_files(date_from: date, date_to: date) -> float | None:
     """
-    Ищет CSV-файлы статистики Яндекс.Директ в корне репозитория.
+    Ищет CSV и XLSX-файлы статистики Яндекс.Директ в корне репозитория.
 
-    Формат имени файла: *_e-17479930.csv  (как выгружает Яндекс.Директ)
-    Формат содержимого: CSV с заголовком, колонка «Расход, ₽», даты в «День» dd.mm.yyyy.
-
+    Форматы имени файла: *_e-17479930.csv, *_e-17479930.xlsx и аналогичные direct_*, yandex_direct_*.
     Суммирует расходы за строки, где дата попадает в [date_from, date_to].
     Если подходящих файлов нет — возвращает None.
     Если данных за нужный период нет — возвращает 0.0.
@@ -955,96 +953,188 @@ def parse_direct_csv_files(date_from: date, date_to: date) -> float | None:
     import glob
     import csv as _csv
 
-    # Ищем все CSV-файлы с данными Директа в корне репозитория
     repo_root = os.path.dirname(os.path.abspath(__file__))
     patterns = [
         os.path.join(repo_root, "*_e-17479930.csv"),
         os.path.join(repo_root, "direct_*.csv"),
         os.path.join(repo_root, "yandex_direct_*.csv"),
+        os.path.join(repo_root, "*_e-17479930.xlsx"),
+        os.path.join(repo_root, "direct_*.xlsx"),
+        os.path.join(repo_root, "yandex_direct_*.xlsx"),
     ]
     found_files = []
-    # (Раздел автоматического запроса расходов Яндекс.Директа удален по решению пользователя.
-    # Расходы Яндекс.Директа берутся только из CSV-файлов, добавленных в репозиторий)
     for pattern in patterns:
         found_files.extend(glob.glob(pattern))
-    found_files = list(set(found_files))  # убираем дубли
+    found_files = list(set(found_files))
 
     if not found_files:
-        log.debug("CSV-файлы Яндекс.Директ не найдены в корне репозитория.")
+        log.debug("Файлы Яндекс.Директ (CSV/XLSX) не найдены в корне репозитория.")
         return None
 
-    log.info("Найдено CSV-файлов Яндекс.Директ: %d → %s", len(found_files),
+    # Сортируем по времени изменения (от старых к новым)
+    # Чтобы более новые файлы перезаписывали значения накладывающихся дат
+    try:
+        found_files.sort(key=os.path.getmtime)
+    except Exception:
+        pass
+
+    log.info("Найдено файлов Яндекс.Директ: %d → %s", len(found_files),
              [os.path.basename(f) for f in found_files])
 
-    total_cost = 0.0
+    global_daily_costs = {}
     found_any_row = False
 
     for filepath in found_files:
-        try:
-            with open(filepath, encoding="utf-8-sig", newline="") as fh:
-                reader = _csv.DictReader(fh)
+        ext = os.path.splitext(filepath)[1].lower()
+        file_daily_costs = {} # date -> float (сумма за этот день в текущем файле)
+        
+        if ext == ".csv":
+            try:
+                with open(filepath, encoding="utf-8-sig", newline="") as fh:
+                    reader = _csv.DictReader(fh)
+                    fieldnames = reader.fieldnames or []
+                    date_col  = next((c for c in fieldnames if "день" in c.lower()), None)
+                    cost_col  = next(
+                        (c for c in fieldnames
+                         if "расход" in c.lower() or "стоимость" in c.lower() or "cost" in c.lower()),
+                        None,
+                    )
 
-                # Находим нужные колонки (Яндекс иногда меняет регистр/пробелы)
-                fieldnames = reader.fieldnames or []
-                date_col  = next((c for c in fieldnames if "день" in c.lower()), None)
-                cost_col  = next(
-                    (c for c in fieldnames
-                     if "расход" in c.lower() or "стоимость" in c.lower() or "cost" in c.lower()),
-                    None,
-                )
+                    if not date_col or not cost_col:
+                        log.warning("[CSV] Не найдены нужные колонки в '%s'. Колонки: %s",
+                                    os.path.basename(filepath), fieldnames)
+                        continue
 
-                if not date_col or not cost_col:
-                    log.warning("[CSV] Не найдены нужные колонки в '%s'. Колонки: %s",
-                                os.path.basename(filepath), fieldnames)
+                    log.info("[CSV] Обрабатываем '%s' | дата: '%s' | расход: '%s'",
+                             os.path.basename(filepath), date_col, cost_col)
+
+                    for row in reader:
+                        date_val = row.get(date_col, "").strip()
+                        cost_val = row.get(cost_col, "").strip()
+
+                        if not date_val or date_val.lower() in ("итого", "total", ""):
+                            continue
+
+                        try:
+                            row_date = date(
+                                int(date_val[6:10]),
+                                int(date_val[3:5]),
+                                int(date_val[0:2]),
+                            )
+                        except (ValueError, IndexError):
+                            try:
+                                row_date = date.fromisoformat(date_val[:10])
+                            except ValueError:
+                                continue
+
+                        if not cost_val or cost_val in ("-", "--", ""):
+                            continue
+                        try:
+                            cost_num = float(
+                                cost_val.replace(",", ".").replace("\xa0", "").replace(" ", "")
+                            )
+                            file_daily_costs[row_date] = file_daily_costs.get(row_date, 0.0) + cost_num
+                            found_any_row = True
+                        except ValueError:
+                            continue
+            except Exception as exc:
+                log.warning("[CSV] Ошибка при чтении '%s': %s", os.path.basename(filepath), exc)
+                continue
+
+        elif ext == ".xlsx":
+            try:
+                import openpyxl
+                from datetime import datetime as dt_datetime, date as dt_date
+                wb = openpyxl.load_workbook(filepath, data_only=True)
+                ws = wb.active
+
+                header_row_idx = None
+                date_col_idx = None
+                cost_col_idx = None
+
+                for r_idx in range(1, 30):
+                    row_vals = [ws.cell(row=r_idx, column=c).value for c in range(1, 15)]
+                    for c_idx, val in enumerate(row_vals):
+                        if val:
+                            val_str = str(val).strip().lower()
+                            if "день" in val_str:
+                                date_col_idx = c_idx + 1
+                            elif "расход" in val_str or "стоимость" in val_str or "cost" in val_str:
+                                cost_col_idx = c_idx + 1
+
+                    if date_col_idx is not None and cost_col_idx is not None:
+                        header_row_idx = r_idx
+                        break
+
+                if header_row_idx is None:
+                    log.warning("[XLSX] Заголовки (день/расход) не найдены в файле %s", os.path.basename(filepath))
+                    wb.close()
                     continue
 
-                log.info("[CSV] Обрабатываем '%s' | дата: '%s' | расход: '%s'",
-                         os.path.basename(filepath), date_col, cost_col)
+                log.info("[XLSX] Обрабатываем '%s' | дата-колонка: %d | расход-колонка: %d",
+                         os.path.basename(filepath), date_col_idx, cost_col_idx)
 
-                for row in reader:
-                    date_val = row.get(date_col, "").strip()
-                    cost_val = row.get(cost_col, "").strip()
+                for r_idx in range(header_row_idx + 1, ws.max_row + 1):
+                    date_cell = ws.cell(row=r_idx, column=date_col_idx).value
+                    cost_cell = ws.cell(row=r_idx, column=cost_col_idx).value
 
-                    # Пропускаем строку «Итого» и пустые строки
+                    if date_cell is None:
+                        continue
+
+                    date_val = str(date_cell).strip()
                     if not date_val or date_val.lower() in ("итого", "total", ""):
                         continue
 
-                    # Парсим дату в формате dd.mm.yyyy
-                    try:
-                        row_date = date(
-                            int(date_val[6:10]),
-                            int(date_val[3:5]),
-                            int(date_val[0:2]),
-                        )
-                    except (ValueError, IndexError):
+                    row_date = None
+                    if hasattr(date_cell, "date"):
+                        row_date = date_cell.date()
+                    elif isinstance(date_cell, dt_date):
+                        row_date = date_cell
+                    else:
+                        try:
+                            row_date = date(
+                                int(date_val[6:10]),
+                                int(date_val[3:5]),
+                                int(date_val[0:2]),
+                            )
+                        except (ValueError, IndexError):
+                            try:
+                                row_date = date.fromisoformat(date_val[:10])
+                            except ValueError:
+                                continue
+
+                    if not row_date:
                         continue
 
-                    # Проверяем попадание в нужный период
-                    if not (date_from <= row_date <= date_to):
-                        continue
-
-                    # Парсим сумму расхода
-                    if not cost_val or cost_val in ("-", "--", ""):
+                    if cost_cell is None or str(cost_cell).strip() in ("-", "--", ""):
                         continue
                     try:
                         cost_num = float(
-                            cost_val.replace(",", ".").replace("\xa0", "").replace(" ", "")
+                            str(cost_cell).replace(",", ".").replace("\xa0", "").replace(" ", "")
                         )
-                        total_cost += cost_num
+                        file_daily_costs[row_date] = file_daily_costs.get(row_date, 0.0) + cost_num
                         found_any_row = True
                     except ValueError:
                         continue
+                wb.close()
+            except Exception as exc:
+                log.warning("[XLSX] Ошибка при чтении '%s': %s", os.path.basename(filepath), exc)
+                continue
 
-        except Exception as exc:
-            log.warning("[CSV] Ошибка при чтении '%s': %s", os.path.basename(filepath), exc)
-            continue
+        # Мержим данные из этого файла в общий словарь.
+        # Поскольку файлы обрабатываются от старых к новым, более новый файл
+        # полностью перепишет суммы для накладывающихся дат.
+        global_daily_costs.update(file_daily_costs)
 
     if not found_any_row:
-        log.warning("[CSV] Файлы найдены, но данных за период %s—%s нет.", date_from, date_to)
+        log.warning("[Local Budget] Данных за период %s—%s нет.", date_from, date_to)
         return None
 
-    log.info("[CSV] Расходы из CSV за период %s—%s: %.2f руб.", date_from, date_to, total_cost)
+    # Суммируем расходы по всем уникальным датам периода
+    total_cost = sum(cost for r_date, cost in global_daily_costs.items() if date_from <= r_date <= date_to)
+    log.info("[Local Budget] Расходы за период %s—%s: %.2f руб.", date_from, date_to, total_cost)
     return total_cost
+
 
 
 # (Функции автоматического получения расходов через API/браузер удалены)
@@ -1939,14 +2029,15 @@ def process_week(sheets, webhook_url: str, spreadsheet_id: str, target_wed: date
     # 3. Агрегируем данные (целевые считаются строго по дате создания)
     aggregated = aggregate_leads(windows, all_leads)
 
-    # 4. Получаем расходы Яндекс.Директ из CSV-файлов в репозитории
+    # 4. Получаем расходы Яндекс.Директ из CSV/XLSX-файлов в репозитории
     aggregated["budgets"] = {}
-    csv_cost = parse_direct_csv_files(current_wed, current_tue)
-    if csv_cost is not None:
-        aggregated["budgets"]["Я.Директ e-17479930"] = csv_cost
-        log.info("Расходы Яндекс.Директ записаны: %.2f руб.", csv_cost)
+    local_cost = parse_direct_local_files(current_wed, current_tue)
+    if local_cost is not None:
+        aggregated["budgets"]["Я.Директ e-17479930"] = local_cost
+        log.info("Расходы Яндекс.Директ записаны: %.2f руб.", local_cost)
     else:
-        log.warning("Расходы Яндекс.Директ не получены из CSV-файлов.")
+        log.warning("Расходы Яндекс.Директ не получены из локальных файлов.")
+
 
 
     # 5. Работаем с Google Sheets

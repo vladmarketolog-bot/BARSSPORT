@@ -8,4 +8,5 @@ requests>=2.31.0
 google-api-python-client>=2.108.0
 google-auth>=2.23.0
 google-auth-httplib2>=0.1.1
-
+# Парсинг XLSX-файлов статистики Яндекс.Директ
+openpyxl>=3.1.0
