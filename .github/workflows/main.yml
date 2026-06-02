@@ -35,11 +35,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # ── 4. Устанавливаем браузер Chromium для Playwright ────────────────────
-      - name: Install Playwright browsers
-        run: playwright install chromium --with-deps
-
-      # ── 5. Запускаем скрипт ─────────────────────────────────────────────────
+      # ── 4. Запускаем скрипт ─────────────────────────────────────────────────
       - name: Run leads report script
         env:
           # Все секреты подтягиваются из GitHub Secrets репозитория
@@ -47,15 +43,10 @@ jobs:
           BITRIX24_WEBHOOK_URL:        ${{ secrets.BITRIX24_WEBHOOK_URL }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           SPREADSHEET_ID:              ${{ secrets.SPREADSHEET_ID }}
-          YANDEX_DIRECT_TOKEN:         ${{ secrets.YANDEX_DIRECT_TOKEN }}
-          YANDEX_DIRECT_CLIENT_LOGIN:  ${{ secrets.YANDEX_DIRECT_CLIENT_LOGIN }}
-          # Браузерный вход (резервный способ получения расходов)
-          YANDEX_LOGIN:                ${{ secrets.YANDEX_LOGIN }}
-          YANDEX_PASSWORD:             ${{ secrets.YANDEX_PASSWORD }}
-          YANDEX_SECRET_ANSWER:        ${{ secrets.YANDEX_SECRET_ANSWER }}
           # Опциональный флаг отладки (из ручного запуска)
           DEBUG_MODE:                  ${{ github.event.inputs.debug_mode || 'false' }}
         run: python script.py
+
 
       # ── 5. Уведомление об ошибке (опционально) ─────────────────────────────
       # Раскомментируйте блок ниже, если хотите получать уведомления в Telegram

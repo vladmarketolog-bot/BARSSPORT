@@ -21,18 +21,10 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Install Playwright browsers
-        run: playwright install chromium --with-deps
-
       - name: Run backfill script
         env:
           BITRIX24_WEBHOOK_URL:        ${{ secrets.BITRIX24_WEBHOOK_URL }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           SPREADSHEET_ID:              ${{ secrets.SPREADSHEET_ID }}
-          YANDEX_DIRECT_TOKEN:         ${{ secrets.YANDEX_DIRECT_TOKEN }}
-          YANDEX_DIRECT_CLIENT_LOGIN:  ${{ secrets.YANDEX_DIRECT_CLIENT_LOGIN }}
-          # Браузерный вход (резервный способ получения расходов)
-          YANDEX_LOGIN:                ${{ secrets.YANDEX_LOGIN }}
-          YANDEX_PASSWORD:             ${{ secrets.YANDEX_PASSWORD }}
-          YANDEX_SECRET_ANSWER:        ${{ secrets.YANDEX_SECRET_ANSWER }}
         run: python backfill.py
+
