@@ -1577,11 +1577,11 @@ def update_dashboard(sheets, spreadsheet_id: str):
     # 7 .. 7+num_months-1: Данные по месяцам
     # 7+num_months: ИТОГО по месяцам
     # 8+num_months .. 9+num_months: Отступы
-    # 10+num_months: Заголовок Секции 2 (По каналам)
+    # 10+num_months: Заголовок Секции 2 (По каналам в разрезе месяцев)
     # 11+num_months: Шапка Таблицы 2
-    # 12+num_months .. 12+num_months+num_channels-1: Данные по каналам
-    # 12+num_months+num_channels: ИТОГО по каналам
-    row_count = 13 + num_months + num_channels
+    # 12+num_months .. 12+num_months + num_channels*(num_months+1) - 1: Данные по каналам
+    # 12+num_months + num_channels*(num_months+1): ИТОГО по каналам
+    row_count = 13 + num_months + num_channels * (num_months + 1)
     values = [["" for _ in range(9)] for _ in range(row_count)]
     requests_list = []
 
@@ -1744,60 +1744,89 @@ def update_dashboard(sheets, spreadsheet_id: str):
     values[r_itogo_m][7] = ""
     values[r_itogo_m][8] = ""
 
-    # Раздел 2: Эффективность по каналам за все время
+    # Раздел 2: Эффективность по каналам в разрезе месяцев
     r_sec2_hdr = r_itogo_m + 3
-    values[r_sec2_hdr][0] = "ЭФФЕКТИВНОСТЬ ПО КАНАЛАМ (ЗА ВСЕ ВРЕМЯ)"
+    values[r_sec2_hdr][0] = "ЭФФЕКТИВНОСТЬ ПО КАНАЛАМ В РАЗРЕЗЕ МЕСЯЦЕВ"
 
     r_sec2_tbl_hdr = r_sec2_hdr + 1
     values[r_sec2_tbl_hdr] = [
-        "Источник", "Бюджет, ₽", "Всего лидов", "Целевых лидов", 
+        "Источник", "Месяц", "Бюджет, ₽", "Всего лидов", "Целевых лидов", 
         "Конверсия в целевой, %", "Цена лида, ₽", "Цена целевого лида, ₽",
-        "Доля бюджета, %", "Доля целевых, %"
+        "Динамика CPTL MoM, %"
     ]
 
     # Строки данных по каналам
     start_c_row = r_sec2_tbl_hdr + 1
-    r_itogo_c = start_c_row + num_channels
+    r_itogo_c = start_c_row + num_channels * (num_months + 1)
     r_itogo_c_num = r_itogo_c + 1
 
+    channel_itogo_rows_1indexed = []
+
     for s_idx, src in enumerate(TABLE_ROWS):
-        r = start_c_row + s_idx
-        r_num = r + 1
-
-        # Формулы суммирования ячеек конкретного канала по всем неделям всех месяцев:
-        # Строка канала s_idx в неделе шаблона: 9 + idx * 28 + s_idx (бюджет I, всего лидов G, целевых H)
-        budget_cells = []
-        leads_cells = []
-        target_cells = []
-
-        for m_title, m_yr, m_mn, n_w in months_data:
+        channel_start_row_0idx = start_c_row + s_idx * (num_months + 1)
+        
+        # Устанавливаем название канала
+        values[channel_start_row_0idx][0] = src
+        
+        for m_idx, (m_title, m_yr, m_mn, n_w) in enumerate(months_data):
+            r = channel_start_row_0idx + m_idx
+            r_num = r + 1
+            
+            values[r][1] = m_title
+            
+            # На листе m_title, неделя idx имеет строку: 9 + idx * 28 + s_idx
+            budget_cells = []
+            leads_cells = []
+            target_cells = []
             for idx in range(n_w):
                 row_in_sheet = 9 + idx * 28 + s_idx
                 budget_cells.append(f"'{m_title}'!I{row_in_sheet}")
                 leads_cells.append(f"'{m_title}'!G{row_in_sheet}")
                 target_cells.append(f"'{m_title}'!H{row_in_sheet}")
+                
+            values[r][2] = f"=SUM({'; '.join(budget_cells)})"
+            values[r][3] = f"=SUM({'; '.join(leads_cells)})"
+            values[r][4] = f"=SUM({'; '.join(target_cells)})"
+            values[r][5] = f'=IF(D{r_num}>0; E{r_num}/D{r_num}; "")'
+            values[r][6] = f'=IF(D{r_num}>0; C{r_num}/D{r_num}; "")'
+            values[r][7] = f'=IF(E{r_num}>0; C{r_num}/E{r_num}; "")'
+            
+            if m_idx == 0:
+                values[r][8] = ""
+            else:
+                prev_r_num = r_num - 1
+                values[r][8] = f'=IF(H{prev_r_num}>0; (H{r_num}-H{prev_r_num})/H{prev_r_num}; "")'
 
-        values[r][0] = src
-        values[r][1] = f"=SUM({'; '.join(budget_cells)})"
-        values[r][2] = f"=SUM({'; '.join(leads_cells)})"
-        values[r][3] = f"=SUM({'; '.join(target_cells)})"
-        values[r][4] = f'=IF(C{r_num}>0; D{r_num}/C{r_num}; "")'
-        values[r][5] = f'=IF(C{r_num}>0; B{r_num}/C{r_num}; "")'
-        values[r][6] = f'=IF(D{r_num}>0; B{r_num}/D{r_num}; "")'
+        # Строка Итого для канала
+        r_itogo = channel_start_row_0idx + num_months
+        r_itogo_num = r_itogo + 1
+        channel_itogo_rows_1indexed.append(r_itogo_num)
+        
+        values[r_itogo][1] = "Итого"
+        m_start_r_num = channel_start_row_0idx + 1
+        m_end_r_num = channel_start_row_0idx + num_months
+        values[r_itogo][2] = f"=SUM(C{m_start_r_num}:C{m_end_r_num})"
+        values[r_itogo][3] = f"=SUM(D{m_start_r_num}:D{m_end_r_num})"
+        values[r_itogo][4] = f"=SUM(E{m_start_r_num}:E{m_end_r_num})"
+        values[r_itogo][5] = f'=IF(D{r_itogo_num}>0; E{r_itogo_num}/D{r_itogo_num}; "")'
+        values[r_itogo][6] = f'=IF(D{r_itogo_num}>0; C{r_itogo_num}/D{r_itogo_num}; "")'
+        values[r_itogo][7] = f'=IF(E{r_itogo_num}>0; C{r_itogo_num}/E{r_itogo_num}; "")'
+        values[r_itogo][8] = ""
 
-        # Вычисление долей бюджета и целевых лидов по каналам
-        values[r][7] = f'=IF(B{r_itogo_c_num}>0; B{r_num}/B{r_itogo_c_num}; "")'
-        values[r][8] = f'=IF(D{r_itogo_c_num}>0; D{r_num}/D{r_itogo_c_num}; "")'
-
-    # Строка ИТОГО таблицы по каналам
+    # Строка глобального ИТОГО таблицы по каналам
     values[r_itogo_c][0] = "ИТОГО"
-    values[r_itogo_c][1] = f"=SUM(B{start_c_row+1}:B{r_itogo_c})"
-    values[r_itogo_c][2] = f"=SUM(C{start_c_row+1}:C{r_itogo_c})"
-    values[r_itogo_c][3] = f"=SUM(D{start_c_row+1}:D{r_itogo_c})"
-    values[r_itogo_c][4] = f'=IF(C{r_itogo_c_num}>0; D{r_itogo_c_num}/C{r_itogo_c_num}; "")'
-    values[r_itogo_c][5] = f'=IF(C{r_itogo_c_num}>0; B{r_itogo_c_num}/C{r_itogo_c_num}; "")'
-    values[r_itogo_c][6] = f'=IF(D{r_itogo_c_num}>0; B{r_itogo_c_num}/D{r_itogo_c_num}; "")'
-    values[r_itogo_c][7] = ""
+    values[r_itogo_c][1] = ""
+    
+    sum_b_parts = [f"C{r}" for r in channel_itogo_rows_1indexed]
+    sum_c_parts = [f"D{r}" for r in channel_itogo_rows_1indexed]
+    sum_d_parts = [f"E{r}" for r in channel_itogo_rows_1indexed]
+    
+    values[r_itogo_c][2] = f"={'+'.join(sum_b_parts)}"
+    values[r_itogo_c][3] = f"={'+'.join(sum_c_parts)}"
+    values[r_itogo_c][4] = f"={'+'.join(sum_d_parts)}"
+    values[r_itogo_c][5] = f'=IF(D{r_itogo_c_num}>0; E{r_itogo_c_num}/D{r_itogo_c_num}; "")'
+    values[r_itogo_c][6] = f'=IF(D{r_itogo_c_num}>0; C{r_itogo_c_num}/D{r_itogo_c_num}; "")'
+    values[r_itogo_c][7] = f'=IF(E{r_itogo_c_num}>0; C{r_itogo_c_num}/E{r_itogo_c_num}; "")'
     values[r_itogo_c][8] = ""
 
     # ── 5. Оформление и Стилизирование (batchUpdate) ─────────────────────────
@@ -1913,26 +1942,49 @@ def update_dashboard(sheets, spreadsheet_id: str):
     format_range(r_sec2_hdr, r_sec2_hdr, 0, 8, bg_hex="#475569", fg_hex="#FFFFFF", size=11, bold=True, align="LEFT")
     format_range(r_sec2_tbl_hdr, r_sec2_tbl_hdr, 0, 8, bg_hex="#334155", fg_hex="#FFFFFF", size=10, bold=True)
 
-    # Данные таблицы по каналам
+    # Данные таблицы по каналам в разрезе месяцев
     for s_idx in range(num_channels):
-        r = start_c_row + s_idx
-        bg = "#FFFFFF" if s_idx % 2 == 0 else "#F8FAFC"
-        format_range(r, r, 0, 8, bg_hex=bg, size=9)
-        format_range(r, r, 0, 0, bg_hex=bg, size=9, bold=True, align="LEFT")
-        format_range(r, r, 1, 1, bg_hex=bg, size=9, align="RIGHT", num_pattern="#,##0\" ₽\"")
-        format_range(r, r, 2, 3, bg_hex=bg, size=9, num_pattern="#,##0")
-        format_range(r, r, 4, 4, bg_hex=bg, size=9, num_pattern="0.0%")
-        format_range(r, r, 5, 6, bg_hex=bg, size=9, align="RIGHT", num_pattern="#,##0\" ₽\"")
-        format_range(r, r, 7, 8, bg_hex=bg, size=9, num_pattern="0.0%")
+        channel_start_row_0idx = start_c_row + s_idx * (num_months + 1)
+        
+        # Объединяем название канала по вертикали (от первого месяца до "Итого" включительно)
+        add_merge(channel_start_row_0idx, channel_start_row_0idx + num_months, 0, 0)
+        
+        # Базовый цвет фона для этой группы (чередуем группы каналов)
+        group_bg = "#FFFFFF" if s_idx % 2 == 0 else "#F8FAFC"
+        
+        # Форматируем месячные строки
+        for m_idx in range(num_months):
+            r = channel_start_row_0idx + m_idx
+            format_range(r, r, 0, 8, bg_hex=group_bg, size=9)
+            format_range(r, r, 0, 0, bg_hex=group_bg, size=9, bold=True, align="LEFT")
+            format_range(r, r, 1, 1, bg_hex=group_bg, size=9, align="LEFT", bold=False) # Название месяца (не жирный)
+            format_range(r, r, 2, 2, bg_hex=group_bg, size=9, align="RIGHT", num_pattern="#,##0\" ₽\"")
+            format_range(r, r, 3, 4, bg_hex=group_bg, size=9, num_pattern="#,##0")
+            format_range(r, r, 5, 5, bg_hex=group_bg, size=9, num_pattern="0.0%")
+            format_range(r, r, 6, 7, bg_hex=group_bg, size=9, align="RIGHT", num_pattern="#,##0\" ₽\"")
+            format_range(r, r, 8, 8, bg_hex=group_bg, size=9, num_pattern="0.0%")
+            
+        # Форматируем строку Итого для этого канала
+        r_itogo = channel_start_row_0idx + num_months
+        itogo_bg = "#F1F5F9" if s_idx % 2 == 0 else "#E2E8F0"
+        format_range(r_itogo, r_itogo, 0, 8, bg_hex=itogo_bg, size=9, bold=True)
+        format_range(r_itogo, r_itogo, 0, 0, bg_hex=itogo_bg, size=9, bold=True, align="LEFT")
+        format_range(r_itogo, r_itogo, 1, 1, bg_hex=itogo_bg, size=9, bold=True, align="LEFT")
+        format_range(r_itogo, r_itogo, 2, 2, bg_hex=itogo_bg, size=9, bold=True, align="RIGHT", num_pattern="#,##0\" ₽\"")
+        format_range(r_itogo, r_itogo, 3, 4, bg_hex=itogo_bg, size=9, bold=True, num_pattern="#,##0")
+        format_range(r_itogo, r_itogo, 5, 5, bg_hex=itogo_bg, size=9, bold=True, num_pattern="0.0%")
+        format_range(r_itogo, r_itogo, 6, 7, bg_hex=itogo_bg, size=9, bold=True, align="RIGHT", num_pattern="#,##0\" ₽\"")
+        format_range(r_itogo, r_itogo, 8, 8, bg_hex=itogo_bg, size=9, bold=True, num_pattern="0.0%")
 
-    # ИТОГО таблицы по каналам
+    # ИТОГО таблицы по каналам (глобальное ИТОГО)
     format_range(r_itogo_c, r_itogo_c, 0, 8, bg_hex="#E2E8F0", size=10, bold=True)
     format_range(r_itogo_c, r_itogo_c, 0, 0, bg_hex="#E2E8F0", size=10, bold=True, align="LEFT")
-    format_range(r_itogo_c, r_itogo_c, 1, 1, bg_hex="#E2E8F0", size=10, bold=True, align="RIGHT", num_pattern="#,##0\" ₽\"")
-    format_range(r_itogo_c, r_itogo_c, 2, 3, bg_hex="#E2E8F0", size=10, bold=True, num_pattern="#,##0")
-    format_range(r_itogo_c, r_itogo_c, 4, 4, bg_hex="#E2E8F0", size=10, bold=True, num_pattern="0.0%")
-    format_range(r_itogo_c, r_itogo_c, 5, 6, bg_hex="#E2E8F0", size=10, bold=True, align="RIGHT", num_pattern="#,##0\" ₽\"")
-    format_range(r_itogo_c, r_itogo_c, 7, 8, bg_hex="#E2E8F0", size=10, bold=True, num_pattern="0.0%")
+    format_range(r_itogo_c, r_itogo_c, 1, 1, bg_hex="#E2E8F0", size=10, bold=True, align="LEFT")
+    format_range(r_itogo_c, r_itogo_c, 2, 2, bg_hex="#E2E8F0", size=10, bold=True, align="RIGHT", num_pattern="#,##0\" ₽\"")
+    format_range(r_itogo_c, r_itogo_c, 3, 4, bg_hex="#E2E8F0", size=10, bold=True, num_pattern="#,##0")
+    format_range(r_itogo_c, r_itogo_c, 5, 5, bg_hex="#E2E8F0", size=10, bold=True, num_pattern="0.0%")
+    format_range(r_itogo_c, r_itogo_c, 6, 7, bg_hex="#E2E8F0", size=10, bold=True, align="RIGHT", num_pattern="#,##0\" ₽\"")
+    format_range(r_itogo_c, r_itogo_c, 8, 8, bg_hex="#E2E8F0", size=10, bold=True, num_pattern="0.0%")
 
     # ── 6. Размеры ячеек (Ширина колонок) ────────────────────────────────────
     col_widths = {
