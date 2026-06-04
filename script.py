@@ -1559,6 +1559,33 @@ def update_dashboard(sheets, spreadsheet_id: str):
     # 3. Создаем или очищаем вкладку "Дашборд"
     sheet_id = get_or_create_sheet_tab(sheets, spreadsheet_id, "Дашборд")
     
+    # Сброс всех существующих объединений и стилей
+    sheets.batchUpdate(
+        spreadsheetId=spreadsheet_id,
+        body={
+            "requests": [
+                {
+                    "unmergeCells": {
+                        "range": {
+                            "sheetId": sheet_id
+                        }
+                    }
+                },
+                {
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": sheet_id
+                        },
+                        "cell": {
+                            "userEnteredFormat": {}
+                        },
+                        "fields": "userEnteredFormat"
+                    }
+                }
+            ]
+        }
+    ).execute()
+    
     # Очищаем содержимое перед записью
     sheets.values().clear(spreadsheetId=spreadsheet_id, range="'Дашборд'!A1:Z100").execute()
 
@@ -1584,26 +1611,6 @@ def update_dashboard(sheets, spreadsheet_id: str):
     row_count = 14 + num_months + num_channels
     values = [["" for _ in range(9)] for _ in range(row_count)]
     requests_list = []
-
-    # Сброс всех существующих объединений и стилей
-    requests_list.append({
-        "unmergeCells": {
-            "range": {
-                "sheetId": sheet_id
-            }
-        }
-    })
-    requests_list.append({
-        "repeatCell": {
-            "range": {
-                "sheetId": sheet_id
-            },
-            "cell": {
-                "userEnteredFormat": {}
-            },
-            "fields": "userEnteredFormat"
-        }
-    })
 
     # Перемещаем дашборд на первую вкладку (индекс 0)
     requests_list.append({
