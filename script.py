@@ -1171,10 +1171,12 @@ def build_update_requests(
     junk = aggregated.get("junk", {})
     budgets = aggregated.get("budgets", {})
 
-    # Автоматический расчет еженедельной доли бюджета на SEO barssport.com (30 000 руб. в месяц)
+    # Автоматический расчет еженедельной доли бюджета на SEO barssport.com (30 000 руб. в месяц до июня 2026)
     current_wed = windows["current_wed"]
     m_num = current_wed.month
     y_num = current_wed.year
+    
+    is_before_june_2026 = (y_num < 2026) or (y_num == 2026 and m_num < 6)
     
     # Считаем количество сред в этом месяце
     num_weeks = 0
@@ -1185,10 +1187,13 @@ def build_update_requests(
             num_weeks += 1
         d += timedelta(days=1)
         
-    if num_weeks > 0:
+    if num_weeks > 0 and is_before_june_2026:
         seo_weekly = round(30000.0 / num_weeks, 2)
         if "SEO barssport.com" not in budgets or budgets["SEO barssport.com"] is None:
             budgets["SEO barssport.com"] = seo_weekly
+    else:
+        if "SEO barssport.com" not in budgets or budgets["SEO barssport.com"] is None:
+            budgets["SEO barssport.com"] = 0.0
 
     requests_list = []
 
